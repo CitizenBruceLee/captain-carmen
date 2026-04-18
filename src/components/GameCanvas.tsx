@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { 
-  GAME_WIDTH, 
-  GAME_HEIGHT, 
-  PLAYER_WIDTH, 
-  PLAYER_HEIGHT, 
+import React, { useEffect, useRef, useCallback } from 'react';
+import {
+  GAME_WIDTH,
+  GAME_HEIGHT,
+  PLAYER_WIDTH,
+  PLAYER_HEIGHT,
   PLAYER_SPEED,
   PROJECTILE_WIDTH,
   PROJECTILE_HEIGHT,
@@ -20,41 +20,103 @@ import {
   ENEMY_WIDTH,
   ENEMY_HEIGHT,
   SCROLL_SPEED,
-  COLORS
+  COLORS,
+  LEVELS,
+  STAGE_THEMES,
 } from '../constants';
-import { 
-  Player, 
-  Enemy, 
-  Projectile, 
-  Particle, 
+import {
+  Player,
+  Enemy,
+  Projectile,
+  Particle,
   GameState,
   EnemyType,
   EnemyClass,
   ProjectileClass,
   PowerUp,
-  PowerUpType
+  PowerUpType,
 } from '../types';
 
 interface GameCanvasProps {
   onScoreUpdate: (score: number) => void;
   onLivesUpdate: (lives: number) => void;
+  onBombStateUpdate: (bombs: number, charge: number) => void;
+  onComboUpdate: (comboCount: number, comboMultiplier: number) => void;
   onGameOver: () => void;
   gameState: GameState;
+  level: number;
   onGameStart: () => void;
   onStateChange: (state: GameState) => void;
 }
 
-export default function GameCanvas({ 
-  onScoreUpdate, 
-  onLivesUpdate, 
+type TerrainFeature = {
+  x: number;
+  y: number;
+  color: string;
+};
+
+type FormationSpawn = {
+  delay: number;
+  x: number;
+  type: EnemyType;
+  class?: EnemyClass;
+  vx?: number;
+  vy?: number;
+  phase?: number;
+};
+
+type SpritePalette = {
+  primary: string;
+  secondary: string;
+  highlight: string;
+  shadow: string;
+};
+
+type SoundCue =
+  | 'blaster'
+  | 'laser'
+  | 'bomb'
+  | 'enemyShot'
+  | 'explosion'
+  | 'pickup'
+  | 'playerExplosion'
+  | 'gameOverExplosion'
+  | 'bossAlert'
+  | 'bossSpawn'
+  | 'bossDown'
+  | 'waveClear';
+
+type ExplosionOptions = {
+  particleCount?: number;
+  speed?: number;
+  lifeMin?: number;
+  lifeMax?: number;
+  sizeMin?: number;
+  sizeMax?: number;
+  soundCue?: SoundCue | null;
+};
+
+export default function GameCanvas({
+  onScoreUpdate,
+  onLivesUpdate,
+  onBombStateUpdate,
+  onComboUpdate,
   onGameOver,
   gameState,
+  level,
   onGameStart,
-  onStateChange
+  onStateChange,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
-  
+  const lastBombHudRef = useRef({ bombs: 3, charge: 1 });
+
+  const MAX_BOMB_STOCK = 3;
+  const BOMB_RECHARGE_MS = 3200;
+  const COMBO_TIMEOUT_MS = 2200;
+  const WAVE_ENTRY_SHIELD_MS = 5000;
+  const BOSS_MISSILE_GRACE_MS = 5000;
+
   // Game Entities
   const playerRef = useRef<Player>({
     id: 'player',
@@ -66,6 +128,7 @@ export default function GameCanvas({
     vy: 0,
     lives: 3,
     score: 0,
+    bombStock: MAX_BOMB_STOCK,
     bombX: GAME_WIDTH / 2,
     bombY: GAME_HEIGHT - PLAYER_HEIGHT - 100 - BOMB_DISTANCE,
     weaponTimer: 0,
@@ -77,15 +140,280 @@ export default function GameCanvas({
   const projectilesRef = useRef<Projectile[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const powerUpsRef = useRef<PowerUp[]>([]);
-  const terrainRef = useRef<{x: number, y: number, color: string}[]>([]);
+  const terrainRef = useRef<TerrainFeature[]>([]);
   const keysRef = useRef<Record<string, boolean>>({});
   const lastKeysRef = useRef<Record<string, boolean>>({});
-  
+
   const lastSpawnTime = useRef<number>(0);
   const frameCount = useRef<number>(0);
+  const currentFrameTimeRef = useRef<number>(0);
   const scrollOffset = useRef<number>(0);
   const enemiesDefeatedInLevel = useRef(0);
   const bossSpawningRef = useRef(false);
+  const comboCountRef = useRef(0);
+  const comboExpiresAtRef = useRef(0);
+  const activeFormationRef = useRef<FormationSpawn[] | null>(null);
+  const formationStartedAtRef = useRef(0);
+  const formationStepIndexRef = useRef(0);
+  const formationCursorRef = useRef(0);
+  const lastFormationTriggerRef = useRef(0);
+  const stageThemeRef = useRef(STAGE_THEMES[0]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioMasterGainRef = useRef<GainNode | null>(null);
+  const noiseBufferRef = useRef<AudioBuffer | null>(null);
+  const soundCooldownRef = useRef<Record<string, number>>({});
+  const gameOverSequenceEndsAtRef = useRef(0);
+  const finalExplosionRef = useRef<{ x: number; y: number; startedAt: number } | null>(null);
+
+  const createNoiseBuffer = useCallback((audioContext: AudioContext) => {
+    const buffer = audioContext.createBuffer(1, audioContext.sampleRate * 0.25, audioContext.sampleRate);
+    const channel = buffer.getChannelData(0);
+
+    for (let index = 0; index < channel.length; index += 1) {
+      channel[index] = Math.random() * 2 - 1;
+    }
+
+    return buffer;
+  }, []);
+
+  const ensureAudioReady = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+
+    const audioWindow = window as Window & { webkitAudioContext?: typeof AudioContext };
+    const AudioContextCtor = window.AudioContext ?? audioWindow.webkitAudioContext;
+
+    if (!AudioContextCtor) {
+      return null;
+    }
+
+    if (!audioContextRef.current) {
+      const audioContext = new AudioContextCtor();
+      const masterGain = audioContext.createGain();
+      masterGain.gain.value = 0.18;
+      masterGain.connect(audioContext.destination);
+
+      audioContextRef.current = audioContext;
+      audioMasterGainRef.current = masterGain;
+      noiseBufferRef.current = createNoiseBuffer(audioContext);
+    }
+
+    if (audioContextRef.current.state === 'suspended') {
+      void audioContextRef.current.resume();
+    }
+
+    return audioContextRef.current;
+  }, [createNoiseBuffer]);
+
+  const shouldPlaySound = useCallback((cue: SoundCue, cooldownMs: number) => {
+    const now = performance.now();
+    const lastPlayedAt = soundCooldownRef.current[cue] ?? 0;
+
+    if (now - lastPlayedAt < cooldownMs) {
+      return false;
+    }
+
+    soundCooldownRef.current[cue] = now;
+    return true;
+  }, []);
+
+  const playTone = useCallback((
+    audioContext: AudioContext,
+    masterGain: GainNode,
+    frequency: number,
+    duration: number,
+    options: {
+      type?: OscillatorType;
+      volume?: number;
+      when?: number;
+      slideTo?: number;
+      detune?: number;
+    } = {}
+  ) => {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const startAt = options.when ?? audioContext.currentTime;
+
+    oscillator.type = options.type ?? 'triangle';
+    oscillator.frequency.setValueAtTime(frequency, startAt);
+
+    if (options.slideTo !== undefined) {
+      oscillator.frequency.exponentialRampToValueAtTime(Math.max(options.slideTo, 1), startAt + duration);
+    }
+
+    if (options.detune !== undefined) {
+      oscillator.detune.setValueAtTime(options.detune, startAt);
+    }
+
+    gain.gain.setValueAtTime(0.0001, startAt);
+    gain.gain.exponentialRampToValueAtTime(options.volume ?? 0.06, startAt + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+
+    oscillator.connect(gain);
+    gain.connect(masterGain);
+    oscillator.start(startAt);
+    oscillator.stop(startAt + duration + 0.03);
+  }, []);
+
+  const playNoiseBurst = useCallback((
+    audioContext: AudioContext,
+    masterGain: GainNode,
+    duration: number,
+    options: {
+      volume?: number;
+      filterFrequency?: number;
+      when?: number;
+    } = {}
+  ) => {
+    if (!noiseBufferRef.current) {
+      noiseBufferRef.current = createNoiseBuffer(audioContext);
+    }
+
+    const noiseSource = audioContext.createBufferSource();
+    const filter = audioContext.createBiquadFilter();
+    const gain = audioContext.createGain();
+    const startAt = options.when ?? audioContext.currentTime;
+
+    noiseSource.buffer = noiseBufferRef.current;
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(options.filterFrequency ?? 850, startAt);
+    filter.Q.value = 0.7;
+
+    gain.gain.setValueAtTime(0.0001, startAt);
+    gain.gain.exponentialRampToValueAtTime(options.volume ?? 0.05, startAt + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+
+    noiseSource.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain);
+    noiseSource.start(startAt);
+    noiseSource.stop(startAt + duration + 0.03);
+  }, [createNoiseBuffer]);
+
+  const playSound = useCallback((cue: SoundCue) => {
+    const audioContext = ensureAudioReady();
+    const masterGain = audioMasterGainRef.current;
+
+    if (!audioContext || !masterGain) {
+      return;
+    }
+
+    const now = audioContext.currentTime;
+
+    switch (cue) {
+      case 'blaster':
+        if (!shouldPlaySound(cue, 65)) return;
+        playTone(audioContext, masterGain, 980, 0.05, { type: 'square', volume: 0.04, slideTo: 720, when: now });
+        playTone(audioContext, masterGain, 1440, 0.03, { type: 'triangle', volume: 0.025, when: now + 0.01 });
+        break;
+      case 'laser':
+        if (!shouldPlaySound(cue, 70)) return;
+        playTone(audioContext, masterGain, 1240, 0.08, { type: 'sawtooth', volume: 0.05, slideTo: 920, when: now });
+        playTone(audioContext, masterGain, 1860, 0.06, { type: 'sine', volume: 0.028, when: now + 0.01, slideTo: 1480 });
+        break;
+      case 'bomb':
+        if (!shouldPlaySound(cue, 180)) return;
+        playTone(audioContext, masterGain, 220, 0.2, { type: 'sawtooth', volume: 0.06, slideTo: 90, when: now });
+        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.035, filterFrequency: 500, when: now + 0.03 });
+        break;
+      case 'enemyShot':
+        if (!shouldPlaySound(cue, 120)) return;
+        playTone(audioContext, masterGain, 430, 0.08, { type: 'square', volume: 0.03, slideTo: 240, when: now });
+        break;
+      case 'explosion':
+        if (!shouldPlaySound(cue, 90)) return;
+        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.07, filterFrequency: 760, when: now });
+        playTone(audioContext, masterGain, 160, 0.15, { type: 'triangle', volume: 0.025, slideTo: 60, when: now });
+        break;
+      case 'pickup':
+        if (!shouldPlaySound(cue, 160)) return;
+        playTone(audioContext, masterGain, 660, 0.08, { type: 'triangle', volume: 0.05, when: now });
+        playTone(audioContext, masterGain, 990, 0.1, { type: 'triangle', volume: 0.04, when: now + 0.06 });
+        break;
+      case 'playerExplosion':
+        if (!shouldPlaySound(cue, 250)) return;
+        playNoiseBurst(audioContext, masterGain, 0.18, { volume: 0.06, filterFrequency: 440, when: now });
+        playTone(audioContext, masterGain, 280, 0.2, { type: 'sawtooth', volume: 0.05, slideTo: 90, when: now });
+        break;
+      case 'gameOverExplosion':
+        if (!shouldPlaySound(cue, 900)) return;
+        playNoiseBurst(audioContext, masterGain, 0.5, { volume: 0.1, filterFrequency: 320, when: now });
+        playTone(audioContext, masterGain, 180, 0.46, { type: 'sawtooth', volume: 0.08, slideTo: 38, when: now });
+        playTone(audioContext, masterGain, 320, 0.38, { type: 'triangle', volume: 0.05, slideTo: 70, when: now + 0.08 });
+        break;
+      case 'bossAlert':
+        if (!shouldPlaySound(cue, 2200)) return;
+        playTone(audioContext, masterGain, 220, 0.16, { type: 'sawtooth', volume: 0.045, when: now });
+        playTone(audioContext, masterGain, 277, 0.16, { type: 'sawtooth', volume: 0.045, when: now + 0.2 });
+        playTone(audioContext, masterGain, 330, 0.22, { type: 'sawtooth', volume: 0.05, when: now + 0.4 });
+        break;
+      case 'bossSpawn':
+        if (!shouldPlaySound(cue, 1200)) return;
+        playTone(audioContext, masterGain, 180, 0.28, { type: 'sawtooth', volume: 0.05, slideTo: 420, when: now });
+        playNoiseBurst(audioContext, masterGain, 0.16, { volume: 0.03, filterFrequency: 1200, when: now + 0.1 });
+        break;
+      case 'bossDown':
+        if (!shouldPlaySound(cue, 1600)) return;
+        playTone(audioContext, masterGain, 520, 0.12, { type: 'triangle', volume: 0.05, when: now });
+        playTone(audioContext, masterGain, 390, 0.14, { type: 'triangle', volume: 0.05, when: now + 0.12 });
+        playTone(audioContext, masterGain, 260, 0.2, { type: 'triangle', volume: 0.06, when: now + 0.26 });
+        playNoiseBurst(audioContext, masterGain, 0.25, { volume: 0.06, filterFrequency: 950, when: now + 0.1 });
+        break;
+      case 'waveClear':
+        if (!shouldPlaySound(cue, 2200)) return;
+        playTone(audioContext, masterGain, 523.25, 0.12, { type: 'triangle', volume: 0.045, when: now });
+        playTone(audioContext, masterGain, 659.25, 0.12, { type: 'triangle', volume: 0.045, when: now + 0.11 });
+        playTone(audioContext, masterGain, 783.99, 0.14, { type: 'triangle', volume: 0.05, when: now + 0.22 });
+        playTone(audioContext, masterGain, 1046.5, 0.28, { type: 'sine', volume: 0.04, when: now + 0.38, slideTo: 1174.66 });
+        playTone(audioContext, masterGain, 1318.51, 0.24, { type: 'sine', volume: 0.03, when: now + 0.48 });
+        break;
+      default:
+        break;
+    }
+  }, [ensureAudioReady, playNoiseBurst, playTone, shouldPlaySound]);
+
+  const syncBombHud = useCallback((bombStock: number) => {
+    const bombs = Math.floor(bombStock);
+    const charge = bombStock >= MAX_BOMB_STOCK ? 1 : Number((bombStock - bombs).toFixed(2));
+
+    if (lastBombHudRef.current.bombs !== bombs || lastBombHudRef.current.charge !== charge) {
+      lastBombHudRef.current = { bombs, charge };
+      onBombStateUpdate(bombs, charge);
+    }
+  }, [onBombStateUpdate]);
+
+  const resetCombo = useCallback(() => {
+    if (comboCountRef.current !== 0) {
+      comboCountRef.current = 0;
+      comboExpiresAtRef.current = 0;
+      onComboUpdate(0, 1);
+    }
+  }, [onComboUpdate]);
+
+  const registerKill = useCallback((enemy: Enemy, projectileClass: ProjectileClass, time: number) => {
+    const p = playerRef.current;
+
+    if (time > comboExpiresAtRef.current) {
+      comboCountRef.current = 0;
+    }
+
+    comboCountRef.current += 1;
+    comboExpiresAtRef.current = time + COMBO_TIMEOUT_MS;
+
+    const comboMultiplier = Math.min(1 + Math.floor((comboCountRef.current - 1) / 3), 5);
+    const styleBonus = projectileClass === 'BOMB' && enemy.class === 'GROUND' ? 150 : 0;
+    const scoreAward = enemy.points * comboMultiplier + styleBonus;
+
+    p.score += scoreAward;
+    onScoreUpdate(p.score);
+    onComboUpdate(comboCountRef.current, comboMultiplier);
+
+    if (enemy.class === 'GROUND') {
+      p.bombStock = Math.min(MAX_BOMB_STOCK, p.bombStock + 0.35);
+      syncBombHud(p.bombStock);
+    }
+  }, [onComboUpdate, onScoreUpdate, syncBombHud]);
   
   const resetGameState = useCallback(() => {
     playerRef.current = {
@@ -98,11 +426,12 @@ export default function GameCanvas({
       vy: 0,
       lives: 3,
       score: 0,
+      bombStock: MAX_BOMB_STOCK,
       bombX: GAME_WIDTH / 2,
       bombY: GAME_HEIGHT - PLAYER_HEIGHT - 100 - BOMB_DISTANCE,
       weaponTimer: 0,
       hasAutoFire: false,
-      invisibleTimer: 5000,
+      invisibleTimer: WAVE_ENTRY_SHIELD_MS,
     };
     enemiesRef.current = [];
     projectilesRef.current = [];
@@ -110,10 +439,42 @@ export default function GameCanvas({
     powerUpsRef.current = [];
     enemiesDefeatedInLevel.current = 0;
     bossSpawningRef.current = false;
+    activeFormationRef.current = null;
+    formationStartedAtRef.current = 0;
+    formationStepIndexRef.current = 0;
+    formationCursorRef.current = 0;
+    lastFormationTriggerRef.current = 0;
     frameCount.current = 0;
     lastSpawnTime.current = 0;
     scrollOffset.current = 0;
+    gameOverSequenceEndsAtRef.current = 0;
+    finalExplosionRef.current = null;
+    lastBombHudRef.current = { bombs: MAX_BOMB_STOCK, charge: 1 };
+    onBombStateUpdate(MAX_BOMB_STOCK, 1);
+    comboCountRef.current = 0;
+    comboExpiresAtRef.current = 0;
+    onComboUpdate(0, 1);
+  }, [onBombStateUpdate, onComboUpdate]);
+
+  const buildTerrainFeatures = useCallback(() => {
+    const features: TerrainFeature[] = [];
+
+    for (let index = 0; index < 20; index += 1) {
+      features.push({
+        x: Math.random() * GAME_WIDTH,
+        y: Math.random() * GAME_HEIGHT,
+        color: Math.random() > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(255,16,240,0.02)',
+      });
+    }
+
+    return features;
   }, []);
+
+  const refreshTerrainForTheme = useCallback((themeIndex: number) => {
+    const theme = STAGE_THEMES[Math.min(themeIndex, STAGE_THEMES.length - 1)];
+    stageThemeRef.current = theme;
+    terrainRef.current = buildTerrainFeatures();
+  }, [buildTerrainFeatures]);
 
   // Reset game on START
   useEffect(() => {
@@ -145,154 +506,328 @@ export default function GameCanvas({
 
   const SPRITES = {
     PLAYER: [
-      "   X   ", // Crown tip
-      "  X X  ",
-      " XXXXX ",
-      "X  X  X", // Shoulder flourishes
+      "   +   ",
+      "  OXO  ",
+      " OXXXO ",
+      "XOXXXOX",
       "XXXXXXX",
-      " XXXXX ", // Diamond base start
-      "  XXX  ",
-      "   X   ",
+      " OXOXO ",
+      "  X X  ",
+      "  O O  ",
     ],
     SCOUT: [
-      "  X X  ", // Antennae/Sparkle
-      "   X   ",
-      " XXXXX ", // Chic body
-      "X  X  X",
-      " XXXXX ",
+      "  + +  ",
+      "  OXO  ",
+      " OXXXO ",
+      "XXOXOXX",
+      " OXXXO ",
       "  X X  ", 
     ],
     FIGHTER: [
-      " X   X ", // Diva wings
-      "  XXX  ",
-      " XXXXX ",
+      " +   + ",
+      " OXXXO ",
       "XXXXXXX",
-      " XXXXX ",
-      "  XXX  ",
+      "XXOXOXX",
+      "XXXXXXX",
+      " OXXXO ",
       " X   X ",
     ],
     ORB: [
-      "  X  ",
-      " X X ",
-      "X   X",
-      " X X ",
-      "  X  ",
+      "  +  ",
+      " OXO ",
+      "XXOXX",
+      " OXO ",
+      "  +  ",
     ],
     STRIKER: [
-      "   X   ",
-      "  XXX  ",
-      " XXXXX ",
+      "   +   ",
+      "  OXO  ",
+      " OXXXO ",
       "XXXXXXX",
-      " X   X ",
-      "X     X",
+      " OXXXO ",
+      "X  X  X",
+    ],
+    BASE: [
+      "   O+O   ",
+      "  OXXXO  ",
+      " OXXXXXO ",
+      "XXXXXXXXX",
+      "XOXXXXXOX",
+      "XXXXXXXXX",
+      "XX#X#X#XX",
+    ],
+    CORE: [
+      "   O+O   ",
+      "  OOXOO  ",
+      " OXXXXXO ",
+      "XXXXXXXXX",
+      "XOXXOXXOX",
+      "XXXXXXXXX",
+      "XX#X#X#XX",
     ],
     MINELAYER: [
-      " XXXXX ",
-      "X     X",
-      "X  X  X",
-      "X     X",
-      " XXXXX ",
+      " OXXXO ",
+      "XXO OXX",
+      "XO + OX",
+      "XXO OXX",
+      " OXXXO ",
+    ],
+    TURRET: [
+      "   O+O   ",
+      "  OOXOO  ",
+      " OXXXXXO ",
+      "XXXXXXXXX",
+      "XOXXXXXOX",
+      "XXXXXXXXX",
+      " XX# #XX ",
     ],
     BOSS: [
-      "      X      ",
-      "     XXX     ", // Master Crown
-      "    XXXXX    ",
-      "  XXXXXXXXX  ",
-      " XXXXXXXXXXX ",
-      "XXXXX X XXXXX", // Piercing eye look
-      " XXX     XXX ",
-      "  X       X  ",
+      "      +      ",
+      "    OOXOO    ",
+      "   OXXXXXO   ",
+      "  OXXXXXXXO  ",
+      " OXXXXXXXXXO ",
+      "XOXXXO+OXXXOX",
+      " XXOO   OOXX ",
+      "  OX     XO  ",
     ],
     AUTO_FIRE: [
-      "  X  ",
-      " X X ",
-      "X X X",
-      " X X ",
-      "  X  ",
+      "  +  ",
+      " OXO ",
+      "XO+OX",
+      " OXO ",
+      "  +  ",
     ]
   };
 
-  const drawArcadeSprite = (ctx: CanvasRenderingContext2D, sprite: string[], x: number, y: number, width: number, height: number, color: string) => {
+  const drawArcadeSprite = (
+    ctx: CanvasRenderingContext2D,
+    sprite: string[],
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    palette: SpritePalette | string
+  ) => {
     const rows = sprite.length;
     const cols = sprite[0].length;
     const pW = width / cols;
     const pH = height / rows;
 
-    ctx.fillStyle = color;
+    const resolvedPalette: SpritePalette = typeof palette === 'string'
+      ? {
+          primary: palette,
+          secondary: '#F6F7FB',
+          highlight: '#FFFFFF',
+          shadow: 'rgba(8, 3, 16, 0.72)',
+        }
+      : palette;
+
     sprite.forEach((row, ri) => {
       for (let ci = 0; ci < row.length; ci++) {
-        if (row[ci] === 'X') {
-          ctx.fillRect(x + ci * pW, y + ri * pH, pW - 1, pH - 1);
+        const pixel = row[ci];
+        if (pixel === ' ') {
+          continue;
         }
+
+        let fill = resolvedPalette.primary;
+        if (pixel === 'O') fill = resolvedPalette.secondary;
+        if (pixel === '+') fill = resolvedPalette.highlight;
+        if (pixel === '#') fill = resolvedPalette.shadow;
+
+        const drawX = x + ci * pW;
+        const drawY = y + ri * pH;
+        const pixelWidth = Math.max(pW - 1, 1);
+        const pixelHeight = Math.max(pH - 1, 1);
+
+        if (pixel !== '#') {
+          ctx.fillStyle = resolvedPalette.shadow;
+          ctx.fillRect(drawX + 1, drawY + 1, pixelWidth, pixelHeight);
+        }
+
+        ctx.fillStyle = fill;
+        ctx.fillRect(drawX, drawY, pixelWidth, pixelHeight);
       }
     });
   };
 
-  // Initialize terrain
-  useEffect(() => {
-    const terrain = [];
-    for (let i = 0; i < 20; i++) {
-      terrain.push({
-        x: Math.random() * GAME_WIDTH,
-        y: Math.random() * GAME_HEIGHT,
-        color: Math.random() > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(255,16,240,0.02)'
-      });
+  const closeAudio = useCallback(() => {
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      void audioContextRef.current.close();
     }
-    terrainRef.current = terrain;
+
+    audioContextRef.current = null;
+    audioMasterGainRef.current = null;
+    noiseBufferRef.current = null;
   }, []);
 
-  const spawnEnemy = useCallback(() => {
-    const x = Math.random() * (GAME_WIDTH - ENEMY_WIDTH);
+  // Initialize terrain
+  useEffect(() => {
+    terrainRef.current = buildTerrainFeatures();
+  }, [buildTerrainFeatures]);
+
+  useEffect(() => {
+    refreshTerrainForTheme(level - 1);
+    playerRef.current.invisibleTimer = WAVE_ENTRY_SHIELD_MS;
+    activeFormationRef.current = null;
+    formationStartedAtRef.current = 0;
+    formationStepIndexRef.current = 0;
+    formationCursorRef.current = 0;
+    lastFormationTriggerRef.current = 0;
+  }, [level, refreshTerrainForTheme]);
+
+  const buildFormationWave = useCallback((stageLevel: number, formationIndex: number): FormationSpawn[] => {
+    const centerX = GAME_WIDTH / 2 - ENEMY_WIDTH / 2;
+    const leftLane = GAME_WIDTH * 0.18;
+    const rightLane = GAME_WIDTH * 0.72;
+
+    const stageFormations: FormationSpawn[][][] = [
+      [
+        [
+          { delay: 0, x: centerX, type: 'FIGHTER', vy: 2.6 },
+          { delay: 140, x: centerX - 70, type: 'SCOUT', vx: 0.55, vy: 2.4 },
+          { delay: 140, x: centerX + 70, type: 'SCOUT', vx: -0.55, vy: 2.4 },
+          { delay: 280, x: centerX - 140, type: 'SCOUT', vx: 0.8, vy: 2.8 },
+          { delay: 280, x: centerX + 140, type: 'SCOUT', vx: -0.8, vy: 2.8 },
+        ],
+        [
+          { delay: 0, x: leftLane, type: 'ORB', vx: 1.2, vy: 2.2, phase: 0 },
+          { delay: 120, x: rightLane, type: 'ORB', vx: -1.2, vy: 2.2, phase: Math.PI },
+          { delay: 240, x: leftLane + 90, type: 'SCOUT', vx: 0.9, vy: 2.6 },
+          { delay: 360, x: rightLane - 90, type: 'SCOUT', vx: -0.9, vy: 2.6 },
+          { delay: 480, x: centerX, type: 'STRIKER', vy: 4.8 },
+        ],
+        [
+          { delay: 0, x: GAME_WIDTH * 0.16, type: 'BASE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 130, x: GAME_WIDTH * 0.41, type: 'CORE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 260, x: GAME_WIDTH * 0.66, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 120, x: GAME_WIDTH * 0.08, type: 'FIGHTER', vx: 0.7, vy: 2.1 },
+          { delay: 120, x: GAME_WIDTH * 0.78, type: 'FIGHTER', vx: -0.7, vy: 2.1 },
+        ],
+      ],
+      [
+        [
+          { delay: 0, x: leftLane - 10, type: 'STRIKER', vy: 5.2 },
+          { delay: 90, x: leftLane + 65, type: 'SCOUT', vx: 0.75, vy: 2.8 },
+          { delay: 180, x: centerX, type: 'FIGHTER', vy: 3 },
+          { delay: 270, x: rightLane - 65, type: 'SCOUT', vx: -0.75, vy: 2.8 },
+          { delay: 360, x: rightLane + 10, type: 'STRIKER', vy: 5.2 },
+        ],
+        [
+          { delay: 0, x: GAME_WIDTH * 0.12, type: 'ORB', vx: 1.4, vy: 2.4, phase: 0 },
+          { delay: 110, x: GAME_WIDTH * 0.82, type: 'ORB', vx: -1.4, vy: 2.4, phase: Math.PI },
+          { delay: 220, x: GAME_WIDTH * 0.28, type: 'MINELAYER', vx: 0.4, vy: 1.9, phase: Math.PI / 2 },
+          { delay: 330, x: GAME_WIDTH * 0.56, type: 'FIGHTER', vy: 2.9 },
+          { delay: 440, x: GAME_WIDTH * 0.72, type: 'MINELAYER', vx: -0.4, vy: 1.9, phase: Math.PI },
+        ],
+        [
+          { delay: 0, x: GAME_WIDTH * 0.14, type: 'BASE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 110, x: GAME_WIDTH * 0.32, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 220, x: GAME_WIDTH * 0.5, type: 'CORE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 330, x: GAME_WIDTH * 0.68, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 110, x: GAME_WIDTH * 0.06, type: 'SCOUT', vx: 0.9, vy: 2.5 },
+          { delay: 110, x: GAME_WIDTH * 0.84, type: 'SCOUT', vx: -0.9, vy: 2.5 },
+        ],
+      ],
+      [
+        [
+          { delay: 0, x: GAME_WIDTH * 0.08, type: 'SCOUT', vx: 1, vy: 3.1 },
+          { delay: 75, x: GAME_WIDTH * 0.22, type: 'FIGHTER', vx: 0.7, vy: 3 },
+          { delay: 150, x: centerX, type: 'STRIKER', vy: 5.4 },
+          { delay: 225, x: GAME_WIDTH * 0.7, type: 'FIGHTER', vx: -0.7, vy: 3 },
+          { delay: 300, x: GAME_WIDTH * 0.84, type: 'SCOUT', vx: -1, vy: 3.1 },
+          { delay: 375, x: centerX, type: 'ORB', vy: 2.5, phase: Math.PI / 3 },
+        ],
+        [
+          { delay: 0, x: GAME_WIDTH * 0.12, type: 'MINELAYER', vx: 0.35, vy: 2 },
+          { delay: 0, x: GAME_WIDTH * 0.76, type: 'MINELAYER', vx: -0.35, vy: 2, phase: Math.PI },
+          { delay: 130, x: GAME_WIDTH * 0.3, type: 'ORB', vx: 1.1, vy: 2.6, phase: 0 },
+          { delay: 130, x: GAME_WIDTH * 0.58, type: 'ORB', vx: -1.1, vy: 2.6, phase: Math.PI },
+          { delay: 260, x: centerX, type: 'STRIKER', vy: 5.8 },
+        ],
+        [
+          { delay: 0, x: GAME_WIDTH * 0.12, type: 'BASE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 90, x: GAME_WIDTH * 0.3, type: 'CORE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 180, x: GAME_WIDTH * 0.48, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 270, x: GAME_WIDTH * 0.66, type: 'CORE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 360, x: GAME_WIDTH * 0.84, type: 'BASE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 120, x: GAME_WIDTH * 0.18, type: 'FIGHTER', vx: 0.8, vy: 2.8 },
+          { delay: 120, x: GAME_WIDTH * 0.7, type: 'FIGHTER', vx: -0.8, vy: 2.8 },
+        ],
+      ],
+    ];
+
+    const stageIndex = Math.min(stageLevel - 1, stageFormations.length - 1);
+    const formations = stageFormations[stageIndex];
+    return formations[formationIndex % formations.length];
+  }, []);
+
+  const spawnEnemy = useCallback((override?: Partial<Enemy>) => {
+    const x = override?.x ?? Math.random() * (GAME_WIDTH - ENEMY_WIDTH);
     const id = Math.random().toString(36).substr(2, 9);
+    const hasTypeOverride = override?.type !== undefined;
     
     // Weighted selection
     const r = Math.random();
-    let type: EnemyType = 'SCOUT';
-    let isGround = false;
+    let type: EnemyType = override?.type ?? 'SCOUT';
+    let isGround = override?.class === 'GROUND';
 
-    if (r < 0.3) {
-      type = 'SCOUT';
-    } else if (r < 0.5) {
-      type = 'FIGHTER';
-    } else if (r < 0.6) {
-      type = 'ORB';
-    } else if (r < 0.7) {
-      type = 'STRIKER';
-    } else if (r < 0.8) {
-      type = 'MINELAYER';
-    } else if (r < 0.9) {
-      type = 'BASE';
-      isGround = true;
-    } else if (r < 0.95) {
-      type = 'CORE';
-      isGround = true;
-    } else {
-      type = 'TURRET';
+    if (!hasTypeOverride) {
+      if (r < 0.3) {
+        type = 'SCOUT';
+      } else if (r < 0.5) {
+        type = 'FIGHTER';
+      } else if (r < 0.6) {
+        type = 'ORB';
+      } else if (r < 0.7) {
+        type = 'STRIKER';
+      } else if (r < 0.8) {
+        type = 'MINELAYER';
+      } else if (r < 0.9) {
+        type = 'BASE';
+        isGround = true;
+      } else if (r < 0.95) {
+        type = 'CORE';
+        isGround = true;
+      } else {
+        type = 'TURRET';
+        isGround = true;
+      }
+    }
+
+    if (type === 'BASE' || type === 'CORE' || type === 'TURRET') {
       isGround = true;
     }
     
     const newEnemy: Enemy = {
       id,
       x,
-      y: -ENEMY_HEIGHT,
-      width: ENEMY_WIDTH,
-      height: ENEMY_HEIGHT,
-      vx: isGround ? 0 : (Math.random() - 0.5) * 2,
-      vy: isGround ? SCROLL_SPEED : (type === 'STRIKER' ? 5 : 2 + Math.random() * 2),
+      y: override?.y ?? -ENEMY_HEIGHT,
+      width: override?.width ?? ENEMY_WIDTH,
+      height: override?.height ?? ENEMY_HEIGHT,
+      vx: override?.vx ?? (isGround ? 0 : (Math.random() - 0.5) * 2),
+      vy: override?.vy ?? (isGround ? SCROLL_SPEED : (type === 'STRIKER' ? 5 : 2 + Math.random() * 2)),
       type,
-      class: isGround ? 'GROUND' : 'AIR',
-      color: COLORS.GREY_VOID,
-      health: type === 'FIGHTER' || type === 'CORE' || type === 'STRIKER' ? 2 : 1,
-      maxHealth: type === 'FIGHTER' || type === 'CORE' || type === 'STRIKER' ? 2 : 1,
-      points: isGround ? 500 : 200,
-      phase: Math.random() * Math.PI * 2,
-      lastFireTime: 0,
-      fireRate: type === 'TURRET' ? 2000 : (type === 'ORB' ? 1500 : 3000),
-      currentPhase: 1,
+      class: override?.class ?? (isGround ? 'GROUND' : 'AIR'),
+      color: override?.color ?? COLORS.GREY_VOID,
+      health: override?.health ?? (type === 'FIGHTER' || type === 'CORE' || type === 'STRIKER' ? 2 : 1),
+      maxHealth: override?.maxHealth ?? (type === 'FIGHTER' || type === 'CORE' || type === 'STRIKER' ? 2 : 1),
+      points: override?.points ?? (isGround ? 500 : 200),
+      phase: override?.phase ?? Math.random() * Math.PI * 2,
+      lastFireTime: override?.lastFireTime ?? 0,
+      fireRate: override?.fireRate ?? (type === 'TURRET' ? 2000 : (type === 'ORB' ? 1500 : 3000)),
+      currentPhase: override?.currentPhase ?? 1,
     };
     
     enemiesRef.current.push(newEnemy);
   }, []);
+
+  const startFormation = useCallback((time: number) => {
+    activeFormationRef.current = buildFormationWave(level, formationCursorRef.current);
+    formationCursorRef.current += 1;
+    formationStartedAtRef.current = time;
+    formationStepIndexRef.current = 0;
+  }, [buildFormationWave, level]);
 
   const spawnPowerUp = useCallback((x: number, y: number) => {
     powerUpsRef.current.push({
@@ -331,12 +866,34 @@ export default function GameCanvas({
     };
     enemiesRef.current.push(newBoss);
     bossSpawningRef.current = false;
-  }, []);
+    playSound('bossSpawn');
+  }, [playSound]);
 
   const shootBlaster = useCallback(() => {
     const p = playerRef.current;
-    
-    const newProjectile: Projectile = {
+    if (p.hasAutoFire) {
+      const laserOrigins = [-14, 0, 14];
+      laserOrigins.forEach((offset, index) => {
+        projectilesRef.current.push({
+          id: Math.random().toString(36).substr(2, 9),
+          x: p.x + p.width / 2 - 4 + offset,
+          y: p.y - 6,
+          width: index === 1 ? 8 : 5,
+          height: 34,
+          vx: 0,
+          vy: -(PROJECTILE_SPEED + 4),
+          owner: 'player',
+          color: index === 1 ? COLORS.NEON.CYAN : '#FFFFFF',
+          class: 'LASER',
+          damage: index === 1 ? 2 : 1,
+          penetration: index === 1 ? 2 : 1,
+        });
+      });
+      playSound('laser');
+      return;
+    }
+
+    projectilesRef.current.push({
       id: Math.random().toString(36).substr(2, 9),
       x: p.x + p.width / 2 - PROJECTILE_WIDTH / 2,
       y: p.y,
@@ -346,11 +903,12 @@ export default function GameCanvas({
       vy: -PROJECTILE_SPEED,
       owner: 'player',
       color: '#FFFFFF',
-      class: 'BLASTER'
-    };
-    
-    projectilesRef.current.push(newProjectile);
-  }, []);
+      class: 'BLASTER',
+      damage: 1,
+      penetration: 0,
+    });
+    playSound('blaster');
+  }, [playSound]);
 
   const enemyShoot = useCallback((enemy: Enemy, type: ProjectileClass, targetX?: number, targetY?: number) => {
     const vx = targetX !== undefined ? (targetX - enemy.x) / 50 : 0;
@@ -367,12 +925,34 @@ export default function GameCanvas({
       owner: 'enemy',
       color: type === 'MISSILE' ? COLORS.NEON.PINK : (type === 'MINE' ? COLORS.NEON.YELLOW : COLORS.NEON.CYAN),
       class: type,
+      damage: 1,
+      penetration: 0,
+      sourceType: enemy.type,
     };
     projectilesRef.current.push(newProjectile);
+    if (enemy.class === 'GROUND' && type === 'BULLET') {
+      createTankShotDebris(enemy);
+    }
+    playSound('enemyShot');
+  }, [createTankShotDebris, playSound]);
+
+  const expireBossMissiles = useCallback((time: number) => {
+    projectilesRef.current.forEach((projectile) => {
+      if (projectile.owner === 'enemy' && projectile.class === 'MISSILE' && projectile.sourceType === 'BOSS') {
+        projectile.expiresAt = Math.min(projectile.expiresAt ?? Number.POSITIVE_INFINITY, time + BOSS_MISSILE_GRACE_MS);
+      }
+    });
   }, []);
 
   const dropBomb = useCallback(() => {
     const p = playerRef.current;
+
+    if (p.bombStock < 1) {
+      return false;
+    }
+
+    p.bombStock = Math.max(0, p.bombStock - 1);
+    syncBombHud(p.bombStock);
     
     const newProjectile: Projectile = {
       id: Math.random().toString(36).substr(2, 9),
@@ -384,31 +964,190 @@ export default function GameCanvas({
       vy: (p.bombY - (p.y + p.height / 2)) / 30,
       owner: 'player',
       color: COLORS.NEON.PINK,
-      class: 'BOMB'
+      class: 'BOMB',
+      damage: 1,
+      penetration: 0,
     };
     
     projectilesRef.current.push(newProjectile);
-  }, []);
+    playSound('bomb');
+    return true;
+  }, [playSound, syncBombHud]);
 
-  const createExplosion = useCallback((x: number, y: number, color: string) => {
-    for (let i = 0; i < 15; i++) {
+  const createExplosion = useCallback((x: number, y: number, color: string, options: ExplosionOptions = {}) => {
+    const particleCount = options.particleCount ?? 15;
+    const speed = options.speed ?? 10;
+    const lifeMin = options.lifeMin ?? 0.5;
+    const lifeMax = options.lifeMax ?? 1;
+    const sizeMin = options.sizeMin ?? 2;
+    const sizeMax = options.sizeMax ?? 6;
+
+    for (let i = 0; i < particleCount; i++) {
+      const maxLife = lifeMin + Math.random() * Math.max(lifeMax - lifeMin, 0.01);
       particlesRef.current.push({
         x,
         y,
-        vx: (Math.random() - 0.5) * 10,
-        vy: (Math.random() - 0.5) * 10,
-        life: 1,
-        maxLife: 0.5 + Math.random() * 0.5,
+        vx: (Math.random() - 0.5) * speed,
+        vy: (Math.random() - 0.5) * speed,
+        life: maxLife,
+        maxLife,
         color,
-        size: 2 + Math.random() * 4,
+        size: sizeMin + Math.random() * Math.max(sizeMax - sizeMin, 0.5),
       });
     }
+
+    if (options.soundCue === undefined) {
+      playSound('explosion');
+    } else if (options.soundCue !== null) {
+      playSound(options.soundCue);
+    }
+  }, [playSound]);
+
+  function createTankShotDebris(enemy: Enemy) {
+    const stageTheme = stageThemeRef.current;
+    const isTurret = enemy.type === 'TURRET';
+    const visualWidth = enemy.width * 1.18;
+    const visualHeight = enemy.height * 1.14;
+    const visualX = enemy.x - (visualWidth - enemy.width) / 2;
+    const visualY = enemy.y - enemy.height * 0.1;
+    const turretBaseX = visualX + visualWidth * 0.5;
+    const turretBaseY = visualY + visualHeight * 0.34;
+    const barrelLength = visualHeight * (isTurret ? 0.45 : 0.31);
+    const muzzleY = turretBaseY - barrelLength;
+
+    for (let index = 0; index < 6; index += 1) {
+      const maxLife = 0.18 + Math.random() * 0.2;
+      particlesRef.current.push({
+        x: turretBaseX + (Math.random() - 0.5) * 5,
+        y: muzzleY + (Math.random() - 0.5) * 3,
+        vx: (Math.random() - 0.5) * 1.6,
+        vy: -0.8 - Math.random() * 1.1,
+        life: maxLife,
+        maxLife,
+        color: index < 2 ? 'rgba(255,255,255,0.9)' : 'rgba(160,170,180,0.55)',
+        size: 2.5 + Math.random() * 2.5,
+      });
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      const maxLife = 0.16 + Math.random() * 0.12;
+      particlesRef.current.push({
+        x: turretBaseX + visualWidth * 0.12,
+        y: turretBaseY + visualHeight * 0.02,
+        vx: 1.4 + Math.random() * 2.2,
+        vy: -0.7 - Math.random() * 1.4,
+        life: maxLife,
+        maxLife,
+        color: index % 2 === 0 ? stageTheme.bossCore : stageTheme.groundAccent,
+        size: 1.5 + Math.random() * 1.8,
+      });
+    }
+  }
+
+  function createTrackDust(enemy: Enemy) {
+    const visualWidth = enemy.width * 1.24;
+    const visualHeight = enemy.height * 1.02;
+    const visualX = enemy.x - (visualWidth - enemy.width) / 2;
+    const visualY = enemy.y - enemy.height * 0.01;
+    const groundLineY = visualY + visualHeight * 0.91;
+    const treadOffsets = [0.22, 0.78];
+
+    treadOffsets.forEach((offset, index) => {
+      const maxLife = 0.22 + Math.random() * 0.14;
+      particlesRef.current.push({
+        x: visualX + visualWidth * offset + (Math.random() - 0.5) * 4,
+        y: groundLineY + Math.random() * 2,
+        vx: (index === 0 ? -1 : 1) * (0.25 + Math.random() * 0.4),
+        vy: -0.45 - Math.random() * 0.35,
+        life: maxLife,
+        maxLife,
+        color: index === 0 ? 'rgba(145, 136, 132, 0.34)' : 'rgba(255, 248, 220, 0.24)',
+        size: 2 + Math.random() * 2.2,
+      });
+    });
+  }
+
+  const updateParticles = useCallback(() => {
+    particlesRef.current.forEach((particle, idx) => {
+      particle.x += particle.vx;
+      particle.y += particle.vy;
+      particle.vy += 0.1;
+      particle.life -= 0.02;
+      if (particle.life <= 0) {
+        particlesRef.current.splice(idx, 1);
+      }
+    });
   }, []);
 
+  const handlePlayerDamage = useCallback((x: number, y: number, time: number) => {
+    const player = playerRef.current;
+
+    player.lives -= 1;
+    onLivesUpdate(player.lives);
+    resetCombo();
+
+    if (player.lives <= 0) {
+      finalExplosionRef.current = { x, y, startedAt: time };
+      gameOverSequenceEndsAtRef.current = time + 1400;
+      createExplosion(x, y, COLORS.NEON.PINK, {
+        particleCount: 52,
+        speed: 15,
+        lifeMin: 1.4,
+        lifeMax: 2.2,
+        sizeMin: 3,
+        sizeMax: 9,
+        soundCue: 'gameOverExplosion',
+      });
+      createExplosion(x, y, '#FFFFFF', {
+        particleCount: 18,
+        speed: 9,
+        lifeMin: 1,
+        lifeMax: 1.5,
+        sizeMin: 2,
+        sizeMax: 5,
+        soundCue: null,
+      });
+      return true;
+    }
+
+    createExplosion(x, y, '#FF6B6B', {
+      particleCount: 28,
+      speed: 11,
+      lifeMin: 0.7,
+      lifeMax: 1.15,
+      sizeMin: 2,
+      sizeMax: 6,
+      soundCue: 'playerExplosion',
+    });
+    return false;
+  }, [createExplosion, onLivesUpdate, resetCombo]);
+
   const update = useCallback((time: number) => {
+    currentFrameTimeRef.current = time;
+    frameCount.current += 1;
+
+    if (gameOverSequenceEndsAtRef.current > 0) {
+      updateParticles();
+      draw();
+
+      if (time >= gameOverSequenceEndsAtRef.current) {
+        gameOverSequenceEndsAtRef.current = 0;
+        finalExplosionRef.current = null;
+        onGameOver();
+        return;
+      }
+
+      requestRef.current = requestAnimationFrame(update);
+      return;
+    }
+
     if (gameState !== 'PLAYING' && gameState !== 'BOSS_WARNING') return;
 
     const p = playerRef.current;
+
+    if (comboCountRef.current > 0 && time > comboExpiresAtRef.current) {
+      resetCombo();
+    }
 
     // Handle Boss Warning state
     if (gameState === 'BOSS_WARNING') {
@@ -449,6 +1188,11 @@ export default function GameCanvas({
         p.hasAutoFire = false;
         p.weaponTimer = 0;
       }
+    }
+
+    if (p.bombStock < MAX_BOMB_STOCK) {
+      p.bombStock = Math.min(MAX_BOMB_STOCK, p.bombStock + (16.67 / BOMB_RECHARGE_MS));
+      syncBombHud(p.bombStock);
     }
 
     // Invisibility Timer
@@ -492,15 +1236,56 @@ export default function GameCanvas({
     // Scroll Background
     scrollOffset.current = (scrollOffset.current + SCROLL_SPEED) % GAME_HEIGHT;
 
+    const stageProfile = LEVELS[Math.min(level - 1, LEVELS.length - 1)];
+    const formationTriggerInterval = Math.max(3, 6 - Math.min(level, 3));
+    const fallbackSpawnDelay = Math.max(900, stageProfile.spawnRate - 150);
+
     // Spawn enemies
     const hasBoss = enemiesRef.current.some(e => e.type === 'BOSS');
     if (gameState === 'PLAYING' && !hasBoss) {
       if (enemiesDefeatedInLevel.current >= 15) {
+        activeFormationRef.current = null;
+        formationStepIndexRef.current = 0;
         onStateChange('BOSS_WARNING');
         enemiesDefeatedInLevel.current = 0;
-      } else if (time - lastSpawnTime.current > 1200) {
-        spawnEnemy();
-        lastSpawnTime.current = time;
+      } else {
+        const shouldTriggerFormation =
+          enemiesDefeatedInLevel.current > 0 &&
+          enemiesDefeatedInLevel.current % formationTriggerInterval === 0 &&
+          lastFormationTriggerRef.current !== enemiesDefeatedInLevel.current &&
+          !activeFormationRef.current;
+
+        if (shouldTriggerFormation) {
+          lastFormationTriggerRef.current = enemiesDefeatedInLevel.current;
+          startFormation(time);
+        }
+
+        if (activeFormationRef.current) {
+          while (
+            formationStepIndexRef.current < activeFormationRef.current.length &&
+            time - formationStartedAtRef.current >= activeFormationRef.current[formationStepIndexRef.current].delay
+          ) {
+            const formationEnemy = activeFormationRef.current[formationStepIndexRef.current];
+            spawnEnemy({
+              x: formationEnemy.x,
+              type: formationEnemy.type,
+              class: formationEnemy.class,
+              vx: formationEnemy.vx,
+              vy: formationEnemy.vy,
+              phase: formationEnemy.phase,
+            });
+            formationStepIndexRef.current += 1;
+            lastSpawnTime.current = time;
+          }
+
+          if (formationStepIndexRef.current >= activeFormationRef.current.length) {
+            activeFormationRef.current = null;
+            formationStepIndexRef.current = 0;
+          }
+        } else if (time - lastSpawnTime.current > fallbackSpawnDelay) {
+          spawnEnemy();
+          lastSpawnTime.current = time;
+        }
       }
     }
 
@@ -521,6 +1306,7 @@ export default function GameCanvas({
         powerUpsRef.current.splice(idx, 1);
         // Visual feedback
         createExplosion(pu.x + pu.width / 2, pu.y + pu.height / 2, COLORS.NEON.YELLOW);
+        playSound('pickup');
       }
     });
 
@@ -539,6 +1325,11 @@ export default function GameCanvas({
         if (speed > 6) {
           proj.vx = (proj.vx / speed) * 6;
           proj.vy = (proj.vy / speed) * 6;
+        }
+
+        if (proj.expiresAt !== undefined && time >= proj.expiresAt) {
+          projectilesRef.current.splice(idx, 1);
+          return;
         }
       }
 
@@ -576,10 +1367,8 @@ export default function GameCanvas({
         proj.y + proj.height > p.y
       ) {
         p.lives -= 1;
-        onLivesUpdate(p.lives);
         projectilesRef.current.splice(idx, 1);
-        createExplosion(p.x + p.width / 2, p.y + p.height / 2, '#FF0000');
-        if (p.lives <= 0) onGameOver();
+        handlePlayerDamage(p.x + p.width / 2, p.y + p.height / 2, time);
       }
     });
 
@@ -606,10 +1395,21 @@ export default function GameCanvas({
            if (hpRatio < 0.3) enemy.currentPhase = 3;
            else if (hpRatio < 0.6) enemy.currentPhase = 2;
         }
+      } else if (enemy.class === 'GROUND') {
+        enemy.phase += 0.08;
       }
       
       enemy.x += enemy.vx;
       enemy.y += enemy.vy;
+
+      if (
+        enemy.class === 'GROUND' &&
+        enemy.y > 20 &&
+        enemy.y < GAME_HEIGHT - 30 &&
+        (frameCount.current + Math.floor(enemy.x)) % 14 === 0
+      ) {
+        createTrackDust(enemy);
+      }
 
       // Attack Behaviors
       const canFire = time - enemy.lastFireTime > enemy.fireRate;
@@ -628,14 +1428,21 @@ export default function GameCanvas({
           if (enemy.currentPhase === 1) {
             enemyShoot(enemy, 'BULLET', p.x, p.y);
             enemyShoot(enemy, 'BULLET', p.x + 50, p.y);
+            if (level >= 2) {
+              enemyShoot(enemy, 'BULLET', p.x - 50, p.y);
+            }
           } else if (enemy.currentPhase === 2) {
             enemyShoot(enemy, 'BULLET', p.x, p.y);
             enemyShoot(enemy, 'MISSILE');
+            if (level >= 3 && frameCount.current % 180 === 0) {
+              enemyShoot(enemy, 'BULLET', p.x + 120, p.y);
+            }
             enemy.fireRate = 600;
           } else if (enemy.currentPhase === 3) {
             // Circular burst
-            for(let i=0; i<8; i++) {
-               const angle = (i / 8) * Math.PI * 2;
+            const burstCount = 8 + Math.min(level - 1, 2) * 2;
+            for(let i=0; i<burstCount; i++) {
+               const angle = (i / burstCount) * Math.PI * 2;
                const bx = enemy.x + enemy.width/2 + Math.cos(angle) * 20;
                const by = enemy.y + enemy.height/2 + Math.sin(angle) * 20;
                enemyShoot(enemy, 'BULLET', bx + Math.cos(angle) * 100, by + Math.sin(angle) * 100);
@@ -657,15 +1464,13 @@ export default function GameCanvas({
         enemy.y + enemy.height > p.y
       ) {
         p.lives -= 1;
-        onLivesUpdate(p.lives);
         enemiesRef.current.splice(eIdx, 1);
-        createExplosion(enemy.x, enemy.y, '#FF0000');
-        if (p.lives <= 0) onGameOver();
+        handlePlayerDamage(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, time);
       }
 
       // Projectile vs Enemy collision
       projectilesRef.current.forEach((proj, pIdx) => {
-        const isBlasterHit = proj.class === 'BLASTER' && enemy.class === 'AIR';
+        const isBlasterHit = (proj.class === 'BLASTER' || proj.class === 'LASER') && enemy.class === 'AIR';
         const isBombHit = proj.class === 'BOMB' && enemy.class === 'GROUND' && proj.width < BOMB_WIDTH * 0.6; // Bomb must be "low" enough
 
         if (
@@ -675,12 +1480,16 @@ export default function GameCanvas({
           proj.y < enemy.y + enemy.height &&
           proj.y + proj.height > enemy.y
         ) {
-          enemy.health -= 1;
-          projectilesRef.current.splice(pIdx, 1);
+          enemy.health -= proj.damage ?? 1;
+
+          if (proj.class === 'LASER' && (proj.penetration ?? 0) > 0) {
+            proj.penetration = (proj.penetration ?? 0) - 1;
+          } else {
+            projectilesRef.current.splice(pIdx, 1);
+          }
           
           if (enemy.health <= 0) {
-            p.score += enemy.points;
-            onScoreUpdate(p.score);
+            registerKill(enemy, proj.class, time);
             createExplosion(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, proj.color);
             
             // Random powerup drop
@@ -691,6 +1500,7 @@ export default function GameCanvas({
             enemiesRef.current.splice(eIdx, 1);
             
             if (enemy.type === 'BOSS') {
+              expireBossMissiles(time);
                onStateChange('LEVEL_UP');
             } else {
                enemiesDefeatedInLevel.current += 1;
@@ -706,44 +1516,38 @@ export default function GameCanvas({
     });
 
     // Update Particles
-    particlesRef.current.forEach((particle, idx) => {
-      particle.x += particle.vx;
-      particle.y += particle.vy;
-      particle.vy += 0.1; // gravity-ish
-      particle.life -= 0.02;
-      if (particle.life <= 0) {
-        particlesRef.current.splice(idx, 1);
-      }
-    });
+    updateParticles();
 
     draw();
     requestRef.current = requestAnimationFrame(update);
-  }, [gameState, shootBlaster, dropBomb, enemyShoot, spawnEnemy, spawnBoss, createExplosion, onScoreUpdate, onLivesUpdate, onGameOver, onStateChange]);
+  }, [createExplosion, dropBomb, enemyShoot, expireBossMissiles, gameState, handlePlayerDamage, level, onGameOver, onLivesUpdate, onStateChange, registerKill, resetCombo, shootBlaster, spawnBoss, spawnEnemy, syncBombHud, updateParticles]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const stageTheme = stageThemeRef.current;
+    const finalExplosion = finalExplosionRef.current;
+    const playerDestroyed = gameOverSequenceEndsAtRef.current > 0;
 
-    // Clear with a very slight fade for motion blur feel
     ctx.fillStyle = COLORS.SPACE_BLACK;
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-    // Background terrain scroller
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.lineWidth = 1;
-    for (let i = 0; i < 10; i++) {
-        const y = ((i * 100 + scrollOffset.current) % GAME_HEIGHT);
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(GAME_WIDTH, y);
-        ctx.stroke();
+    for (let index = 0; index < 10; index += 1) {
+      const y = (index * 100 + scrollOffset.current) % GAME_HEIGHT;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(GAME_WIDTH, y);
+      ctx.stroke();
     }
-    terrainRef.current.forEach(t => {
-      ctx.fillStyle = t.color;
-      const y = (t.y + scrollOffset.current) % GAME_HEIGHT;
-      ctx.fillRect(t.x, y, 40, 40);
+
+    terrainRef.current.forEach((terrain) => {
+      ctx.fillStyle = terrain.color;
+      const y = (terrain.y + scrollOffset.current) % GAME_HEIGHT;
+      ctx.fillRect(terrain.x, y, 40, 40);
     });
 
     const p = playerRef.current;
@@ -759,9 +1563,9 @@ export default function GameCanvas({
       ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
       ctx.fillRect(x, y, barWidth, 4);
       
-      ctx.fillStyle = COLORS.NEON.PINK;
+      ctx.fillStyle = stageTheme.bossBar;
       ctx.shadowBlur = 10;
-      ctx.shadowColor = COLORS.NEON.PINK;
+      ctx.shadowColor = stageTheme.bossBar;
       ctx.fillRect(x, y, barWidth * hpPercent, 4);
       
       ctx.fillStyle = '#fff';
@@ -788,7 +1592,7 @@ export default function GameCanvas({
     // Draw Bomb Reticle
     if (gameState === 'PLAYING') {
       ctx.save();
-      ctx.strokeStyle = COLORS.NEON.CYAN;
+      ctx.strokeStyle = stageTheme.reticle;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(p.bombX, p.bombY, 15, 0, Math.PI * 2);
@@ -805,55 +1609,58 @@ export default function GameCanvas({
       ctx.restore();
     }
 
-    // Draw Player
-    ctx.save();
-    
-    // Startup Invisibility Effect
-    if (p.invisibleTimer > 0) {
-      ctx.globalAlpha = 0.3 + Math.sin(frameCount.current * 0.2) * 0.2;
-      // Modern Cloak Halo
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.setLineDash([5, 5]);
-      ctx.lineWidth = 1;
+    if (!playerDestroyed) {
+      // Draw Player
+      ctx.save();
+      
+      // Startup Invisibility Effect
+      if (p.invisibleTimer > 0) {
+        ctx.globalAlpha = 0.3 + Math.sin(frameCount.current * 0.2) * 0.2;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.setLineDash([5, 5]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 0.8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      const auraGradient = ctx.createRadialGradient(
+        p.x + p.width / 2, p.y + p.height / 2, 0,
+        p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5
+      );
+      COLORS.PRIDE_RAINBOW.forEach((color, i) => {
+        auraGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color + '22');
+      });
+      ctx.fillStyle = auraGradient;
       ctx.beginPath();
-      ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 0.8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      drawArcadeSprite(
+        ctx,
+        SPRITES.PLAYER,
+        p.x,
+        p.y,
+        p.width,
+        p.height,
+        {
+          primary: '#FFFFFF',
+          secondary: COLORS.NEON.PINK,
+          highlight: COLORS.NEON.CYAN,
+          shadow: 'rgba(8, 3, 16, 0.82)',
+        }
+      );
+      
+      const engineGradient = ctx.createLinearGradient(p.x, p.y + p.height, p.x, p.y + p.height + 15);
+      engineGradient.addColorStop(0, COLORS.NEON.PINK);
+      engineGradient.addColorStop(1, 'transparent');
+      ctx.fillStyle = engineGradient;
+      ctx.globalAlpha = (p.invisibleTimer > 0 ? 0.2 : 0.6) + Math.sin(frameCount.current * 0.3) * 0.2;
+      ctx.fillRect(p.x + p.width / 2 - 4, p.y + p.height - 2, 8, 15);
+      ctx.globalAlpha = 1.0;
+      ctx.restore();
     }
-
-    // Modern Diva Pride Aura
-    const auraGradient = ctx.createRadialGradient(
-      p.x + p.width / 2, p.y + p.height / 2, 0,
-      p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5
-    );
-    COLORS.PRIDE_RAINBOW.forEach((color, i) => {
-      auraGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color + '22'); // very faint
-    });
-    ctx.fillStyle = auraGradient;
-    ctx.beginPath();
-    ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Arcade Fighter Sprite (Refined Diva Shape)
-    drawArcadeSprite(
-      ctx, 
-      SPRITES.PLAYER, 
-      p.x, 
-      p.y, 
-      p.width, 
-      p.height, 
-      '#FFFFFF'
-    );
-    
-    // Engine glow - DIVA SPECTRAL
-    const engineGradient = ctx.createLinearGradient(p.x, p.y + p.height, p.x, p.y + p.height + 15);
-    engineGradient.addColorStop(0, COLORS.NEON.PINK);
-    engineGradient.addColorStop(1, 'transparent');
-    ctx.fillStyle = engineGradient;
-    ctx.globalAlpha = (p.invisibleTimer > 0 ? 0.2 : 0.6) + Math.sin(frameCount.current * 0.3) * 0.2;
-    ctx.fillRect(p.x + p.width / 2 - 4, p.y + p.height - 2, 8, 15);
-    ctx.globalAlpha = 1.0;
-    ctx.restore();
 
     // Draw Projectiles
     projectilesRef.current.forEach(proj => {
@@ -868,6 +1675,22 @@ export default function GameCanvas({
         ctx.shadowBlur = 10;
         ctx.shadowColor = proj.color;
         ctx.fillRect(proj.x, proj.y, proj.width, proj.height);
+      } else if (proj.owner === 'player' && proj.class === 'LASER') {
+        const laserGradient = ctx.createLinearGradient(proj.x, proj.y, proj.x, proj.y + proj.height);
+        laserGradient.addColorStop(0, 'rgba(255,255,255,0.98)');
+        laserGradient.addColorStop(0.25, COLORS.NEON.CYAN);
+        laserGradient.addColorStop(0.7, '#8AF5FF');
+        laserGradient.addColorStop(1, 'rgba(0,255,255,0)');
+        ctx.fillStyle = laserGradient;
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = COLORS.NEON.CYAN;
+        ctx.fillRect(proj.x, proj.y, proj.width, proj.height);
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fillRect(proj.x + proj.width * 0.35, proj.y, Math.max(2, proj.width * 0.3), proj.height);
+        ctx.beginPath();
+        ctx.arc(proj.x + proj.width / 2, proj.y, proj.width * 0.7, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fill();
       } else if (proj.class === 'BOMB') {
         ctx.fillStyle = proj.color;
         ctx.shadowBlur = 10;
@@ -915,12 +1738,11 @@ export default function GameCanvas({
       
       if (enemy.class === 'AIR') {
         const hpRatio = enemy.health / enemy.maxHealth;
-        // Pride-based logic for enemies
-        const prideIndex = Math.floor((frameCount.current * 0.05 + enemy.phase) % COLORS.PRIDE_RAINBOW.length);
-        const baseColor = COLORS.PRIDE_RAINBOW[prideIndex];
+        const paletteIndex = Math.floor((frameCount.current * 0.05 + enemy.phase) % stageTheme.airPalette.length);
+        const baseColor = stageTheme.airPalette[paletteIndex];
         
         const color = enemy.type === 'BOSS' 
-          ? (hpRatio > 0.6 ? COLORS.NEON.PINK : (hpRatio > 0.3 ? COLORS.NEON.YELLOW : COLORS.NEON.CYAN))
+          ? (hpRatio > 0.6 ? stageTheme.bossBar : (hpRatio > 0.3 ? stageTheme.reticle : stageTheme.airPalette[0]))
           : baseColor;
 
         ctx.shadowBlur = 15;
@@ -942,33 +1764,221 @@ export default function GameCanvas({
            ctx.stroke();
            ctx.setLineDash([]);
            
-           drawArcadeSprite(ctx, SPRITES.BOSS, enemy.x, enemy.y, enemy.width, enemy.height, color);
+           drawArcadeSprite(ctx, SPRITES.BOSS, enemy.x, enemy.y, enemy.width, enemy.height, {
+             primary: color,
+             secondary: stageTheme.reticle,
+             highlight: stageTheme.bossCore,
+             shadow: 'rgba(4, 2, 8, 0.84)',
+           });
            // Pulsing core - DIVA GEM
            ctx.beginPath();
            ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, 12 * (1 + Math.sin(frameCount.current * 0.1)), 0, Math.PI * 2);
-           ctx.fillStyle = '#fff';
+            ctx.fillStyle = stageTheme.bossCore;
            ctx.shadowBlur = 30;
-           ctx.shadowColor = '#fff';
+            ctx.shadowColor = stageTheme.bossCore;
            ctx.fill();
         } else {
            const spriteKey = (enemy.type as keyof typeof SPRITES) || 'SCOUT';
            const sprite = SPRITES[spriteKey] || SPRITES.SCOUT;
-           drawArcadeSprite(ctx, sprite, enemy.x, enemy.y, enemy.width, enemy.height, color);
+            drawArcadeSprite(ctx, sprite, enemy.x, enemy.y, enemy.width, enemy.height, {
+             primary: color,
+             secondary: stageTheme.reticle,
+             highlight: '#FFFFFF',
+             shadow: 'rgba(8, 3, 16, 0.75)',
+            });
         }
       } else {
-        // Ground targets - use rectangular blocky base
-        const color = enemy.type === 'TURRET' ? COLORS.NEON.CYAN : COLORS.NEON.PINK;
-        ctx.fillStyle = '#1A1A1E';
-        ctx.strokeStyle = color;
+        const isTurret = enemy.type === 'TURRET';
+        const isCore = enemy.type === 'CORE';
+        const recentFireMs = currentFrameTimeRef.current - enemy.lastFireTime;
+        const recoilProgress = isTurret ? Math.max(0, 1 - recentFireMs / 130) : 0;
+        const rumbleOffset = Math.sin(enemy.phase * 6) * 0.9;
+        const groundPrimary = isTurret ? stageTheme.reticle : stageTheme.groundAccent;
+        const groundSecondary = isCore ? '#FFFFFF' : stageTheme.bossCore;
+        const spriteKey = (enemy.type as keyof typeof SPRITES) || 'BASE';
+        const sprite = SPRITES[spriteKey] || SPRITES.BASE;
+        const visualWidth = enemy.width * 1.24;
+        const visualHeight = enemy.height * 1.02;
+        const visualX = enemy.x - (visualWidth - enemy.width) / 2;
+        const visualY = enemy.y - enemy.height * 0.01 + recoilProgress * 2 + rumbleOffset;
+        const groundLineY = visualY + visualHeight * 0.9;
+
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = groundPrimary;
+
+        const groundShadow = ctx.createRadialGradient(
+          visualX + visualWidth * 0.5,
+          groundLineY,
+          visualWidth * 0.08,
+          visualX + visualWidth * 0.5,
+          groundLineY,
+          visualWidth * 0.65
+        );
+        groundShadow.addColorStop(0, 'rgba(0,0,0,0.42)');
+        groundShadow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = groundShadow;
+        ctx.beginPath();
+        ctx.ellipse(visualX + visualWidth * 0.5, groundLineY, visualWidth * 0.62, visualHeight * 0.15, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = `${stageTheme.groundFill}88`;
+        ctx.beginPath();
+        ctx.moveTo(visualX + visualWidth * 0.06, groundLineY + 1);
+        ctx.lineTo(visualX + visualWidth * 0.94, groundLineY + 1);
+        ctx.lineTo(visualX + visualWidth * 0.84, groundLineY + visualHeight * 0.12);
+        ctx.lineTo(visualX + visualWidth * 0.16, groundLineY + visualHeight * 0.12);
+        ctx.closePath();
+        ctx.fill();
+
+        if (frameCount.current % 24 < 12) {
+          ctx.strokeStyle = `${stageTheme.gridColor.slice(0, -2)}22`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(visualX + visualWidth * 0.18, groundLineY + visualHeight * 0.08);
+          ctx.lineTo(visualX + visualWidth * 0.02, groundLineY + visualHeight * 0.15);
+          ctx.moveTo(visualX + visualWidth * 0.82, groundLineY + visualHeight * 0.08);
+          ctx.lineTo(visualX + visualWidth * 0.98, groundLineY + visualHeight * 0.15);
+          ctx.stroke();
+        }
+
+        drawArcadeSprite(ctx, sprite, visualX, visualY, visualWidth, visualHeight * 0.92, {
+          primary: groundPrimary,
+          secondary: groundSecondary,
+          highlight: '#FFFFFF',
+          shadow: 'rgba(8, 3, 16, 0.82)',
+        });
+
+        const treadY = visualY + visualHeight * 0.76;
+        const treadHeight = visualHeight * 0.18;
+        ctx.fillStyle = 'rgba(8, 3, 16, 0.9)';
+        ctx.fillRect(visualX + visualWidth * 0.09, treadY, visualWidth * 0.82, treadHeight);
+        const wheelRadius = treadHeight * 0.46;
+        const wheelY = treadY + treadHeight * 0.58;
+        const wheelCount = isTurret ? 5 : 4;
+        const wheelStartX = visualX + visualWidth * 0.18;
+        const wheelSpacing = visualWidth * (isTurret ? 0.14 : 0.17);
+
+        for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex += 1) {
+          const wheelX = wheelStartX + wheelIndex * wheelSpacing;
+          const wheelGradient = ctx.createRadialGradient(
+            wheelX - wheelRadius * 0.2,
+            wheelY - wheelRadius * 0.25,
+            wheelRadius * 0.15,
+            wheelX,
+            wheelY,
+            wheelRadius
+          );
+          wheelGradient.addColorStop(0, 'rgba(255,255,255,0.38)');
+          wheelGradient.addColorStop(0.25, `${groundPrimary}BB`);
+          wheelGradient.addColorStop(1, 'rgba(12, 8, 12, 0.95)');
+
+          ctx.fillStyle = wheelGradient;
+          ctx.beginPath();
+          ctx.arc(wheelX, wheelY, wheelRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(wheelX, wheelY, wheelRadius * 0.72, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = groundSecondary;
+          ctx.beginPath();
+          ctx.arc(wheelX, wheelY, wheelRadius * 0.24, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1;
+        for (let treadIndex = 0; treadIndex < 4; treadIndex += 1) {
+          const treadX = visualX + visualWidth * (0.18 + treadIndex * 0.165);
+          ctx.beginPath();
+          ctx.moveTo(treadX, treadY + 1);
+          ctx.lineTo(treadX, treadY + treadHeight - 1);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = `${stageTheme.backgroundBottom}CC`;
+        ctx.fillRect(visualX + visualWidth * 0.08, treadY + treadHeight * 0.6, visualWidth * 0.84, treadHeight * 0.62);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(visualX + visualWidth * 0.12, treadY + treadHeight * 0.08, visualWidth * 0.76, treadHeight * 0.12);
+
+        ctx.strokeStyle = `${groundPrimary}66`;
         ctx.lineWidth = 2;
-        ctx.strokeRect(enemy.x, enemy.y, enemy.width, enemy.height);
-        
-        // Blocky alien detail inside ground targets
-        ctx.fillStyle = color;
-        ctx.fillRect(enemy.x + 2, enemy.y + 2, enemy.width - 4, enemy.height - 4);
-        ctx.fillStyle = '#000';
-        ctx.fillRect(enemy.x + 4, enemy.y + 4, 4, 4); // Eyes/Detail
-        ctx.fillRect(enemy.x + enemy.width - 8, enemy.y + 4, 4, 4);
+        ctx.beginPath();
+        ctx.moveTo(visualX + visualWidth * 0.13, treadY + treadHeight);
+        ctx.lineTo(visualX + visualWidth * 0.87, treadY + treadHeight);
+        ctx.stroke();
+
+        if (isTurret || isCore) {
+          const turretBaseX = visualX + visualWidth * 0.5;
+          const turretBaseY = visualY + visualHeight * 0.34 + recoilProgress * 2;
+          const barrelLength = visualHeight * (isTurret ? 0.45 : 0.31);
+          const barrelRecoil = recoilProgress * (isTurret ? visualHeight * 0.12 : 0);
+          const playerCenterX = p.x + p.width / 2;
+          const horizontalBias = Math.max(-1, Math.min(1, (playerCenterX - turretBaseX) / (GAME_WIDTH * 0.24)));
+          const barrelTraverse = horizontalBias * visualWidth * (isTurret ? 0.24 : 0.16);
+          const muzzleX = turretBaseX + barrelTraverse;
+          const muzzleY = turretBaseY - barrelLength + Math.abs(horizontalBias) * visualHeight * 0.06 + barrelRecoil;
+          const supportX = turretBaseX - visualWidth * 0.08 + barrelTraverse * 0.45;
+          const supportY = turretBaseY - barrelLength * 0.72 + Math.abs(horizontalBias) * visualHeight * 0.04 + barrelRecoil * 0.9;
+
+          ctx.strokeStyle = groundPrimary;
+          ctx.lineWidth = isTurret ? 5 : 4;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(turretBaseX, turretBaseY);
+          ctx.lineTo(muzzleX, muzzleY);
+          if (isTurret) {
+            ctx.moveTo(turretBaseX - visualWidth * 0.08, turretBaseY + 2);
+            ctx.lineTo(supportX, supportY);
+          }
+          ctx.stroke();
+
+          ctx.fillStyle = groundSecondary;
+          ctx.beginPath();
+          ctx.arc(turretBaseX, turretBaseY, visualWidth * 0.11, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.arc(muzzleX, muzzleY, isTurret ? 2.6 : 2, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (isTurret && recoilProgress > 0) {
+            const flashRadius = 6 + recoilProgress * 9;
+            const flashGradient = ctx.createRadialGradient(
+              muzzleX,
+              muzzleY,
+              0,
+              muzzleX,
+              muzzleY,
+              flashRadius
+            );
+
+            flashGradient.addColorStop(0, `rgba(255,255,255,${0.95 * recoilProgress})`);
+            flashGradient.addColorStop(0.35, `rgba(255,245,180,${0.7 * recoilProgress})`);
+            flashGradient.addColorStop(1, 'rgba(255,180,0,0)');
+
+            ctx.fillStyle = flashGradient;
+            ctx.beginPath();
+            ctx.arc(turretBaseX, muzzleY, flashRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = `rgba(255,255,255,${0.9 * recoilProgress})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(muzzleX - 7, muzzleY);
+            ctx.lineTo(muzzleX + 7, muzzleY);
+            ctx.moveTo(muzzleX, muzzleY - 7);
+            ctx.lineTo(muzzleX, muzzleY + 7);
+            ctx.stroke();
+          }
+
+          ctx.lineCap = 'butt';
+        }
       }
       
       ctx.restore();
@@ -984,18 +1994,73 @@ export default function GameCanvas({
     });
     ctx.globalAlpha = 1.0;
 
+    if (finalExplosion) {
+      const elapsed = Math.max(0, performance.now() - finalExplosion.startedAt);
+      const progress = Math.min(elapsed / 1400, 1);
+      const radius = 36 + progress * 180;
+      const flash = ctx.createRadialGradient(
+        finalExplosion.x,
+        finalExplosion.y,
+        0,
+        finalExplosion.x,
+        finalExplosion.y,
+        radius
+      );
+
+      flash.addColorStop(0, `rgba(255,255,255,${0.42 * (1 - progress)})`);
+      flash.addColorStop(0.35, `rgba(255,16,240,${0.26 * (1 - progress)})`);
+      flash.addColorStop(1, 'rgba(255,16,240,0)');
+
+      ctx.save();
+      ctx.fillStyle = flash;
+      ctx.beginPath();
+      ctx.arc(finalExplosion.x, finalExplosion.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(255,255,255,${0.9 * (1 - progress)})`;
+      ctx.lineWidth = 5 - progress * 2;
+      ctx.shadowBlur = 30;
+      ctx.shadowColor = COLORS.NEON.PINK;
+      ctx.beginPath();
+      ctx.arc(finalExplosion.x, finalExplosion.y, radius * 0.72, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Draw PowerUps
     powerUpsRef.current.forEach(pu => {
-      drawArcadeSprite(ctx, SPRITES.AUTO_FIRE, pu.x, pu.y, pu.width, pu.height, pu.color);
+      drawArcadeSprite(ctx, SPRITES.AUTO_FIRE, pu.x, pu.y, pu.width, pu.height, {
+        primary: pu.color,
+        secondary: COLORS.NEON.CYAN,
+        highlight: '#FFFFFF',
+        shadow: 'rgba(8, 3, 16, 0.72)',
+      });
       ctx.shadowBlur = 15;
       ctx.shadowColor = pu.color;
       ctx.strokeRect(pu.x - 2, pu.y - 2, pu.width + 4, pu.height + 4);
     });
 
-  }, []);
+  }, [gameState]);
+
+  useEffect(() => {
+    if (gameState === 'BOSS_WARNING') {
+      playSound('bossAlert');
+    }
+
+    if (gameState === 'LEVEL_UP') {
+      playSound('waveClear');
+    }
+  }, [gameState, playSound]);
+
+  useEffect(() => {
+    return () => {
+      closeAudio();
+    };
+  }, [closeAudio]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      ensureAudioReady();
       keysRef.current[e.code] = true;
       if (gameState === 'START' && e.code === 'Space') {
         onGameStart();
@@ -1007,6 +2072,7 @@ export default function GameCanvas({
 
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault();
+      ensureAudioReady();
       if (gameState !== 'PLAYING') {
         if (gameState === 'START') onGameStart();
         return;
@@ -1024,10 +2090,10 @@ export default function GameCanvas({
           touchState.current.moveX = x;
         } else {
           touchState.current.fireActive = true;
-          // Manual fire on tap
-          if (!playerRef.current.hasAutoFire) {
-             shootBlaster();
-             if (Math.random() > 0.7) dropBomb(); // Chance to drop bomb on tap for easier mobile play
+          if (e.touches.length > 1) {
+            dropBomb();
+          } else if (!playerRef.current.hasAutoFire) {
+            shootBlaster();
           }
         }
       }
@@ -1081,7 +2147,7 @@ export default function GameCanvas({
       }
       cancelAnimationFrame(requestRef.current);
     };
-  }, [update, gameState, onGameStart, shootBlaster, dropBomb]);
+  }, [ensureAudioReady, update, gameState, onGameStart, shootBlaster, dropBomb]);
 
   return (
     <div className="relative w-full h-full bg-black touch-none flex items-center justify-center">

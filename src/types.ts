@@ -10,7 +10,7 @@ export interface Point {
 
 export type EnemyType = 'SCOUT' | 'FIGHTER' | 'BASE' | 'CORE' | 'ORB' | 'STRIKER' | 'MINELAYER' | 'TURRET' | 'BOSS';
 export type EnemyClass = 'AIR' | 'GROUND';
-export type ProjectileClass = 'BLASTER' | 'BOMB' | 'BULLET' | 'MISSILE' | 'MINE' | 'BOSS_BEAM';
+export type ProjectileClass = 'BLASTER' | 'LASER' | 'BOMB' | 'BULLET' | 'MISSILE' | 'MINE' | 'BOSS_BEAM';
 export type PowerUpType = 'AUTO_FIRE';
 
 export interface GameObject {
@@ -26,6 +26,7 @@ export interface GameObject {
 export interface Player extends GameObject {
   lives: number;
   score: number;
+  bombStock: number;
   bombX: number; // For reticle
   bombY: number;
   weaponTimer: number; // For power-ups
@@ -57,6 +58,10 @@ export interface Projectile extends GameObject {
   owner: 'player' | 'enemy';
   color: string;
   class: ProjectileClass;
+  damage?: number;
+  penetration?: number;
+  sourceType?: EnemyType;
+  expiresAt?: number;
   targetId?: string; // For tracking missiles
 }
 

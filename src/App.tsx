@@ -13,12 +13,20 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [level, setLevel] = useState(1);
+  const [bombs, setBombs] = useState(3);
+  const [bombCharge, setBombCharge] = useState(1);
+  const [comboCount, setComboCount] = useState(0);
+  const [comboMultiplier, setComboMultiplier] = useState(1);
 
   const handleStart = useCallback(() => {
     setGameState('PLAYING');
     setScore(0);
     setLives(3);
     setLevel(1);
+    setBombs(3);
+    setBombCharge(1);
+    setComboCount(0);
+    setComboMultiplier(1);
   }, []);
 
   const handleRestart = useCallback(() => {
@@ -26,6 +34,10 @@ export default function App() {
     setScore(0);
     setLives(3);
     setLevel(1);
+    setBombs(3);
+    setBombCharge(1);
+    setComboCount(0);
+    setComboMultiplier(1);
   }, []);
 
   const handleGameOver = useCallback(() => {
@@ -34,6 +46,16 @@ export default function App() {
 
   const handleScoreUpdate = useCallback((newScore: number) => {
     setScore(newScore);
+  }, []);
+
+  const handleBombStateUpdate = useCallback((nextBombs: number, nextCharge: number) => {
+    setBombs(nextBombs);
+    setBombCharge(nextCharge);
+  }, []);
+
+  const handleComboUpdate = useCallback((nextComboCount: number, nextComboMultiplier: number) => {
+    setComboCount(nextComboCount);
+    setComboMultiplier(nextComboMultiplier);
   }, []);
 
   const handleStateChange = useCallback((newState: GameState) => {
@@ -56,8 +78,11 @@ export default function App() {
 
       <GameCanvas 
         gameState={gameState}
+        level={level}
         onScoreUpdate={handleScoreUpdate}
         onLivesUpdate={setLives}
+        onBombStateUpdate={handleBombStateUpdate}
+        onComboUpdate={handleComboUpdate}
         onGameOver={handleGameOver}
         onGameStart={handleStart}
         onStateChange={handleStateChange}
@@ -68,6 +93,10 @@ export default function App() {
         score={score}
         lives={lives}
         level={level}
+        bombs={bombs}
+        bombCharge={bombCharge}
+        comboCount={comboCount}
+        comboMultiplier={comboMultiplier}
         onStart={handleStart}
         onRestart={handleRestart}
       />

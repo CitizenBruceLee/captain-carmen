@@ -46,6 +46,7 @@ interface GameCanvasProps {
   gameState: GameState;
   level: number;
   onGameStart: () => void;
+  onRestart: () => void;
   onStateChange: (state: GameState) => void;
 }
 
@@ -105,6 +106,7 @@ export default function GameCanvas({
   gameState,
   level,
   onGameStart,
+  onRestart,
   onStateChange,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -116,6 +118,10 @@ export default function GameCanvas({
   const COMBO_TIMEOUT_MS = 2200;
   const WAVE_ENTRY_SHIELD_MS = 5000;
   const BOSS_MISSILE_GRACE_MS = 5000;
+  const MAX_PARTICLES = 220;
+  const MAX_ENEMY_PROJECTILES = 42;
+  const SOFT_EFFECT_LOAD = 55;
+  const HEAVY_EFFECT_LOAD = 95;
 
   // Game Entities
   const playerRef = useRef<Player>({
@@ -390,6 +396,13 @@ export default function GameCanvas({
       onComboUpdate(0, 1);
     }
   }, [onComboUpdate]);
+
+  const getSceneLoad = useCallback(() => {
+    return enemiesRef.current.length
+      + projectilesRef.current.length
+      + powerUpsRef.current.length
+      + Math.floor(particlesRef.current.length * 0.35);
+  }, []);
 
   const registerKill = useCallback((enemy: Enemy, projectileClass: ProjectileClass, time: number) => {
     const p = playerRef.current;
@@ -722,11 +735,11 @@ export default function GameCanvas({
         ],
         [
           { delay: 0, x: GAME_WIDTH * 0.14, type: 'BASE', class: 'GROUND', vy: SCROLL_SPEED },
-          { delay: 110, x: GAME_WIDTH * 0.32, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
-          { delay: 220, x: GAME_WIDTH * 0.5, type: 'CORE', class: 'GROUND', vy: SCROLL_SPEED },
-          { delay: 330, x: GAME_WIDTH * 0.68, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
-          { delay: 110, x: GAME_WIDTH * 0.06, type: 'SCOUT', vx: 0.9, vy: 2.5 },
-          { delay: 110, x: GAME_WIDTH * 0.84, type: 'SCOUT', vx: -0.9, vy: 2.5 },
+          { delay: 150, x: GAME_WIDTH * 0.5, type: 'CORE', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 300, x: GAME_WIDTH * 0.76, type: 'TURRET', class: 'GROUND', vy: SCROLL_SPEED },
+          { delay: 90, x: GAME_WIDTH * 0.08, type: 'SCOUT', vx: 0.9, vy: 2.5 },
+          { delay: 180, x: GAME_WIDTH * 0.34, type: 'FIGHTER', vx: 0.55, vy: 2.5 },
+          { delay: 90, x: GAME_WIDTH * 0.84, type: 'SCOUT', vx: -0.9, vy: 2.5 },
         ],
       ],
       [
@@ -766,6 +779,7 @@ export default function GameCanvas({
     const x = override?.x ?? Math.random() * (GAME_WIDTH - ENEMY_WIDTH);
     const id = Math.random().toString(36).substr(2, 9);
     const hasTypeOverride = override?.type !== undefined;
+    const forceAirOnly = override?.class === 'AIR';
     
     // Weighted selection
     const r = Math.random();
@@ -773,25 +787,39 @@ export default function GameCanvas({
     let isGround = override?.class === 'GROUND';
 
     if (!hasTypeOverride) {
-      if (r < 0.3) {
-        type = 'SCOUT';
-      } else if (r < 0.5) {
-        type = 'FIGHTER';
-      } else if (r < 0.6) {
-        type = 'ORB';
-      } else if (r < 0.7) {
-        type = 'STRIKER';
-      } else if (r < 0.8) {
-        type = 'MINELAYER';
-      } else if (r < 0.9) {
-        type = 'BASE';
-        isGround = true;
-      } else if (r < 0.95) {
-        type = 'CORE';
-        isGround = true;
+      if (forceAirOnly) {
+        if (r < 0.32) {
+          type = 'SCOUT';
+        } else if (r < 0.56) {
+          type = 'FIGHTER';
+        } else if (r < 0.74) {
+          type = 'ORB';
+        } else if (r < 0.88) {
+          type = 'STRIKER';
+        } else {
+          type = 'MINELAYER';
+        }
       } else {
-        type = 'TURRET';
-        isGround = true;
+        if (r < 0.3) {
+          type = 'SCOUT';
+        } else if (r < 0.5) {
+          type = 'FIGHTER';
+        } else if (r < 0.6) {
+          type = 'ORB';
+        } else if (r < 0.7) {
+          type = 'STRIKER';
+        } else if (r < 0.8) {
+          type = 'MINELAYER';
+        } else if (r < 0.9) {
+          type = 'BASE';
+          isGround = true;
+        } else if (r < 0.95) {
+          type = 'CORE';
+          isGround = true;
+        } else {
+          type = 'TURRET';
+          isGround = true;
+        }
       }
     }
 
@@ -911,6 +939,17 @@ export default function GameCanvas({
   }, [playSound]);
 
   const enemyShoot = useCallback((enemy: Enemy, type: ProjectileClass, targetX?: number, targetY?: number) => {
+    let enemyProjectileCount = 0;
+    for (let index = 0; index < projectilesRef.current.length; index += 1) {
+      if (projectilesRef.current[index].owner === 'enemy') {
+        enemyProjectileCount += 1;
+      }
+    }
+
+    if (enemyProjectileCount >= MAX_ENEMY_PROJECTILES) {
+      return;
+    }
+
     const vx = targetX !== undefined ? (targetX - enemy.x) / 50 : 0;
     const vy = targetY !== undefined ? (targetY - enemy.y) / 50 : 4;
 
@@ -975,7 +1014,11 @@ export default function GameCanvas({
   }, [playSound, syncBombHud]);
 
   const createExplosion = useCallback((x: number, y: number, color: string, options: ExplosionOptions = {}) => {
-    const particleCount = options.particleCount ?? 15;
+    const sceneLoad = getSceneLoad();
+    const requestedParticleCount = options.particleCount ?? 15;
+    const particleScale = sceneLoad > HEAVY_EFFECT_LOAD ? 0.45 : sceneLoad > SOFT_EFFECT_LOAD ? 0.7 : 1;
+    const particleBudget = Math.max(0, MAX_PARTICLES - particlesRef.current.length);
+    const particleCount = Math.min(Math.max(0, Math.ceil(requestedParticleCount * particleScale)), particleBudget);
     const speed = options.speed ?? 10;
     const lifeMin = options.lifeMin ?? 0.5;
     const lifeMax = options.lifeMax ?? 1;
@@ -1001,9 +1044,14 @@ export default function GameCanvas({
     } else if (options.soundCue !== null) {
       playSound(options.soundCue);
     }
-  }, [playSound]);
+  }, [getSceneLoad, playSound]);
 
   function createTankShotDebris(enemy: Enemy) {
+    if (particlesRef.current.length >= MAX_PARTICLES - 10) {
+      return;
+    }
+
+    const lowEffects = getSceneLoad() > SOFT_EFFECT_LOAD;
     const stageTheme = stageThemeRef.current;
     const isTurret = enemy.type === 'TURRET';
     const visualWidth = enemy.width * 1.18;
@@ -1015,7 +1063,7 @@ export default function GameCanvas({
     const barrelLength = visualHeight * (isTurret ? 0.45 : 0.31);
     const muzzleY = turretBaseY - barrelLength;
 
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < (lowEffects ? 3 : 6); index += 1) {
       const maxLife = 0.18 + Math.random() * 0.2;
       particlesRef.current.push({
         x: turretBaseX + (Math.random() - 0.5) * 5,
@@ -1029,7 +1077,7 @@ export default function GameCanvas({
       });
     }
 
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < (lowEffects ? 2 : 5); index += 1) {
       const maxLife = 0.16 + Math.random() * 0.12;
       particlesRef.current.push({
         x: turretBaseX + visualWidth * 0.12,
@@ -1045,6 +1093,10 @@ export default function GameCanvas({
   }
 
   function createTrackDust(enemy: Enemy) {
+    if (particlesRef.current.length >= MAX_PARTICLES - 4 || getSceneLoad() > HEAVY_EFFECT_LOAD) {
+      return;
+    }
+
     const visualWidth = enemy.width * 1.24;
     const visualHeight = enemy.height * 1.02;
     const visualX = enemy.x - (visualWidth - enemy.width) / 2;
@@ -1068,7 +1120,8 @@ export default function GameCanvas({
   }
 
   const updateParticles = useCallback(() => {
-    particlesRef.current.forEach((particle, idx) => {
+    for (let idx = particlesRef.current.length - 1; idx >= 0; idx -= 1) {
+      const particle = particlesRef.current[idx];
       particle.x += particle.vx;
       particle.y += particle.vy;
       particle.vy += 0.1;
@@ -1076,7 +1129,7 @@ export default function GameCanvas({
       if (particle.life <= 0) {
         particlesRef.current.splice(idx, 1);
       }
-    });
+    }
   }, []);
 
   const handlePlayerDamage = useCallback((x: number, y: number, time: number) => {
@@ -1141,7 +1194,7 @@ export default function GameCanvas({
       return;
     }
 
-    if (gameState !== 'PLAYING' && gameState !== 'BOSS_WARNING') return;
+    if (gameState !== 'PLAYING' && gameState !== 'BOSS_WARNING' && gameState !== 'LEVEL_UP') return;
 
     const p = playerRef.current;
 
@@ -1213,9 +1266,9 @@ export default function GameCanvas({
       shootBlaster();
     }
     
-    // Bomb (Shift / Enter / B) - Manual
-    const bombPressed = !!(keysRef.current['ShiftLeft'] || keysRef.current['KeyB']);
-    const bombJustPressed = bombPressed && !lastKeysRef.current['ShiftLeft'] && !lastKeysRef.current['KeyB'];
+    // Bomb (Command / B) - Manual
+    const bombPressed = !!(keysRef.current['MetaLeft'] || keysRef.current['MetaRight'] || keysRef.current['KeyB']);
+    const bombJustPressed = bombPressed && !(lastKeysRef.current['MetaLeft'] || lastKeysRef.current['MetaRight'] || lastKeysRef.current['KeyB']);
 
     if (bombJustPressed) {
       dropBomb();
@@ -1239,6 +1292,8 @@ export default function GameCanvas({
     const stageProfile = LEVELS[Math.min(level - 1, LEVELS.length - 1)];
     const formationTriggerInterval = Math.max(3, 6 - Math.min(level, 3));
     const fallbackSpawnDelay = Math.max(900, stageProfile.spawnRate - 150);
+    const maxGroundEnemies = level === 1 ? 3 : level === 2 ? 2 : 3;
+    let activeGroundEnemies = enemiesRef.current.reduce((count, enemy) => count + (enemy.class === 'GROUND' ? 1 : 0), 0);
 
     // Spawn enemies
     const hasBoss = enemiesRef.current.some(e => e.type === 'BOSS');
@@ -1266,6 +1321,11 @@ export default function GameCanvas({
             time - formationStartedAtRef.current >= activeFormationRef.current[formationStepIndexRef.current].delay
           ) {
             const formationEnemy = activeFormationRef.current[formationStepIndexRef.current];
+            if (formationEnemy.class === 'GROUND' && activeGroundEnemies >= maxGroundEnemies) {
+              formationStepIndexRef.current += 1;
+              continue;
+            }
+
             spawnEnemy({
               x: formationEnemy.x,
               type: formationEnemy.type,
@@ -1274,6 +1334,11 @@ export default function GameCanvas({
               vy: formationEnemy.vy,
               phase: formationEnemy.phase,
             });
+
+            if (formationEnemy.class === 'GROUND') {
+              activeGroundEnemies += 1;
+            }
+
             formationStepIndexRef.current += 1;
             lastSpawnTime.current = time;
           }
@@ -1283,7 +1348,7 @@ export default function GameCanvas({
             formationStepIndexRef.current = 0;
           }
         } else if (time - lastSpawnTime.current > fallbackSpawnDelay) {
-          spawnEnemy();
+          spawnEnemy(activeGroundEnemies >= maxGroundEnemies ? { class: 'AIR' } : undefined);
           lastSpawnTime.current = time;
         }
       }
@@ -1374,6 +1439,8 @@ export default function GameCanvas({
 
     // Update Enemies
     enemiesRef.current.forEach((enemy, eIdx) => {
+      let applyVelocity = true;
+
       // Movement Patterns
       if (enemy.type === 'ORB') {
         enemy.phase += 0.05;
@@ -1383,24 +1450,32 @@ export default function GameCanvas({
         enemy.phase += 0.02;
         enemy.y = 100 + Math.sin(enemy.phase * 0.5) * 50;
       } else if (enemy.type === 'BOSS') {
-        // Boss Movement
-        if (enemy.y < 100) {
-           enemy.y += enemy.vy;
+        const bossAnchorX = GAME_WIDTH / 2 - enemy.width / 2;
+        const bossAnchorY = 96;
+
+        applyVelocity = false;
+
+        if (enemy.y < bossAnchorY) {
+          enemy.y = Math.min(bossAnchorY, enemy.y + enemy.vy);
+          enemy.x += (bossAnchorX - enemy.x) * 0.12;
         } else {
-           enemy.phase += 0.02;
-           enemy.x = (GAME_WIDTH / 2 - enemy.width / 2) + Math.sin(enemy.phase) * (GAME_WIDTH * 0.35);
-           
-           // Phase transitions
-           const hpRatio = enemy.health / enemy.maxHealth;
-           if (hpRatio < 0.3) enemy.currentPhase = 3;
-           else if (hpRatio < 0.6) enemy.currentPhase = 2;
+          enemy.phase += 0.02;
+          enemy.x = bossAnchorX + Math.sin(enemy.phase) * (GAME_WIDTH * 0.35);
+          enemy.y = bossAnchorY + Math.sin(enemy.phase * 0.5) * 18;
+
+          // Phase transitions
+          const hpRatio = enemy.health / enemy.maxHealth;
+          if (hpRatio < 0.3) enemy.currentPhase = 3;
+          else if (hpRatio < 0.6) enemy.currentPhase = 2;
         }
       } else if (enemy.class === 'GROUND') {
         enemy.phase += 0.08;
       }
-      
-      enemy.x += enemy.vx;
-      enemy.y += enemy.vy;
+
+      if (applyVelocity) {
+        enemy.x += enemy.vx;
+        enemy.y += enemy.vy;
+      }
 
       if (
         enemy.class === 'GROUND' &&
@@ -1530,6 +1605,12 @@ export default function GameCanvas({
     const stageTheme = stageThemeRef.current;
     const finalExplosion = finalExplosionRef.current;
     const playerDestroyed = gameOverSequenceEndsAtRef.current > 0;
+    const sceneLoad = enemiesRef.current.length
+      + projectilesRef.current.length
+      + powerUpsRef.current.length
+      + Math.floor(particlesRef.current.length * 0.35);
+    const lowEffects = sceneLoad > SOFT_EFFECT_LOAD;
+    const minimalEffects = sceneLoad > HEAVY_EFFECT_LOAD;
 
     ctx.fillStyle = COLORS.SPACE_BLACK;
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -1564,12 +1645,12 @@ export default function GameCanvas({
       ctx.fillRect(x, y, barWidth, 4);
       
       ctx.fillStyle = stageTheme.bossBar;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = lowEffects ? 0 : 10;
       ctx.shadowColor = stageTheme.bossBar;
       ctx.fillRect(x, y, barWidth * hpPercent, 4);
       
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 8px Inter';
+      ctx.font = "6px 'Press Start 2P', monospace";
       ctx.fillText(`ANOMALY CORE INTEGRITY: ${Math.ceil(hpPercent * 100)}%`, x, y - 8);
     }
 
@@ -1585,7 +1666,7 @@ export default function GameCanvas({
       ctx.fillStyle = COLORS.NEON.YELLOW;
       ctx.fillRect(x, y, barWidth * timerPercent, 4);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 8px Inter';
+      ctx.font = "6px 'Press Start 2P', monospace";
       ctx.fillText(`OVERDRIVE ACTIVE: ${(p.weaponTimer / 1000).toFixed(1)}s`, x, y - 8);
     }
 
@@ -1625,17 +1706,19 @@ export default function GameCanvas({
         ctx.setLineDash([]);
       }
 
-      const auraGradient = ctx.createRadialGradient(
-        p.x + p.width / 2, p.y + p.height / 2, 0,
-        p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5
-      );
-      COLORS.PRIDE_RAINBOW.forEach((color, i) => {
-        auraGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color + '22');
-      });
-      ctx.fillStyle = auraGradient;
-      ctx.beginPath();
-      ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5, 0, Math.PI * 2);
-      ctx.fill();
+      if (!minimalEffects) {
+        const auraGradient = ctx.createRadialGradient(
+          p.x + p.width / 2, p.y + p.height / 2, 0,
+          p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5
+        );
+        COLORS.PRIDE_RAINBOW.forEach((color, i) => {
+          auraGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color + '22');
+        });
+        ctx.fillStyle = auraGradient;
+        ctx.beginPath();
+        ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       drawArcadeSprite(
         ctx,
@@ -1667,40 +1750,50 @@ export default function GameCanvas({
       ctx.save();
       
       if (proj.owner === 'player' && proj.class === 'BLASTER') {
-        const beamGradient = ctx.createLinearGradient(proj.x, proj.y, proj.x, proj.y + proj.height);
-        COLORS.PRIDE_RAINBOW.forEach((color, i) => {
-          beamGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color);
-        });
-        ctx.fillStyle = beamGradient;
-        ctx.shadowBlur = 10;
+        if (lowEffects) {
+          ctx.fillStyle = proj.color;
+        } else {
+          const beamGradient = ctx.createLinearGradient(proj.x, proj.y, proj.x, proj.y + proj.height);
+          COLORS.PRIDE_RAINBOW.forEach((color, i) => {
+            beamGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color);
+          });
+          ctx.fillStyle = beamGradient;
+        }
+        ctx.shadowBlur = lowEffects ? 0 : 10;
         ctx.shadowColor = proj.color;
         ctx.fillRect(proj.x, proj.y, proj.width, proj.height);
       } else if (proj.owner === 'player' && proj.class === 'LASER') {
-        const laserGradient = ctx.createLinearGradient(proj.x, proj.y, proj.x, proj.y + proj.height);
-        laserGradient.addColorStop(0, 'rgba(255,255,255,0.98)');
-        laserGradient.addColorStop(0.25, COLORS.NEON.CYAN);
-        laserGradient.addColorStop(0.7, '#8AF5FF');
-        laserGradient.addColorStop(1, 'rgba(0,255,255,0)');
-        ctx.fillStyle = laserGradient;
-        ctx.shadowBlur = 18;
+        if (lowEffects) {
+          ctx.fillStyle = COLORS.NEON.CYAN;
+        } else {
+          const laserGradient = ctx.createLinearGradient(proj.x, proj.y, proj.x, proj.y + proj.height);
+          laserGradient.addColorStop(0, 'rgba(255,255,255,0.98)');
+          laserGradient.addColorStop(0.25, COLORS.NEON.CYAN);
+          laserGradient.addColorStop(0.7, '#8AF5FF');
+          laserGradient.addColorStop(1, 'rgba(0,255,255,0)');
+          ctx.fillStyle = laserGradient;
+        }
+        ctx.shadowBlur = lowEffects ? 0 : 18;
         ctx.shadowColor = COLORS.NEON.CYAN;
         ctx.fillRect(proj.x, proj.y, proj.width, proj.height);
-        ctx.fillStyle = 'rgba(255,255,255,0.92)';
-        ctx.fillRect(proj.x + proj.width * 0.35, proj.y, Math.max(2, proj.width * 0.3), proj.height);
-        ctx.beginPath();
-        ctx.arc(proj.x + proj.width / 2, proj.y, proj.width * 0.7, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.fill();
+        if (!minimalEffects) {
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.fillRect(proj.x + proj.width * 0.35, proj.y, Math.max(2, proj.width * 0.3), proj.height);
+          ctx.beginPath();
+          ctx.arc(proj.x + proj.width / 2, proj.y, proj.width * 0.7, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.85)';
+          ctx.fill();
+        }
       } else if (proj.class === 'BOMB') {
         ctx.fillStyle = proj.color;
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = lowEffects ? 0 : 10;
         ctx.shadowColor = proj.color;
         ctx.beginPath();
         ctx.arc(proj.x + proj.width / 2, proj.y + proj.height / 2, proj.width / 2, 0, Math.PI * 2);
         ctx.fill();
       } else if (proj.class === 'MISSILE') {
         ctx.fillStyle = proj.color;
-        ctx.shadowBlur = 15;
+        ctx.shadowBlur = lowEffects ? 0 : 15;
         ctx.shadowColor = proj.color;
         ctx.beginPath();
         ctx.moveTo(proj.x, proj.y);
@@ -1710,19 +1803,21 @@ export default function GameCanvas({
       } else if (proj.class === 'MINE') {
         ctx.strokeStyle = proj.color;
         ctx.lineWidth = 2;
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = lowEffects ? 0 : 10;
         ctx.shadowColor = proj.color;
         ctx.beginPath();
         ctx.arc(proj.x, proj.y, proj.width / 2, 0, Math.PI * 2);
         ctx.stroke();
         // Pulsing core
-        ctx.beginPath();
-        ctx.arc(proj.x, proj.y, (proj.width / 4) * (1 + Math.sin(frameCount.current * 0.1)), 0, Math.PI * 2);
-        ctx.fill();
+        if (!minimalEffects) {
+          ctx.beginPath();
+          ctx.arc(proj.x, proj.y, (proj.width / 4) * (1 + Math.sin(frameCount.current * 0.1)), 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else {
         // Standard Enemy Bullet
         ctx.fillStyle = proj.color;
-        ctx.shadowBlur = 5;
+        ctx.shadowBlur = lowEffects ? 0 : 5;
         ctx.shadowColor = proj.color;
         ctx.beginPath();
         ctx.arc(proj.x, proj.y, proj.width / 2, 0, Math.PI * 2);
@@ -1745,24 +1840,26 @@ export default function GameCanvas({
           ? (hpRatio > 0.6 ? stageTheme.bossBar : (hpRatio > 0.3 ? stageTheme.reticle : stageTheme.airPalette[0]))
           : baseColor;
 
-        ctx.shadowBlur = 15;
+        ctx.shadowBlur = lowEffects ? 6 : 15;
         ctx.shadowColor = color;
         
         // Fine Diva Details: Sparkle/Halo
-        if (frameCount.current % 30 < 5) {
+        if (!lowEffects && frameCount.current % 30 < 5) {
            ctx.fillStyle = '#FFFFFF';
            ctx.fillRect(enemy.x + Math.random() * enemy.width, enemy.y + Math.random() * enemy.height, 2, 2);
         }
 
         if (enemy.type === 'BOSS') {
            // Modern Boss Halo
-           ctx.strokeStyle = color;
-           ctx.setLineDash([10, 5]);
-           ctx.lineWidth = 1;
-           ctx.beginPath();
-           ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, enemy.width * 0.7, 0, Math.PI * 2);
-           ctx.stroke();
-           ctx.setLineDash([]);
+           if (!lowEffects) {
+             ctx.strokeStyle = color;
+             ctx.setLineDash([10, 5]);
+             ctx.lineWidth = 1;
+             ctx.beginPath();
+             ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, enemy.width * 0.7, 0, Math.PI * 2);
+             ctx.stroke();
+             ctx.setLineDash([]);
+           }
            
            drawArcadeSprite(ctx, SPRITES.BOSS, enemy.x, enemy.y, enemy.width, enemy.height, {
              primary: color,
@@ -1771,12 +1868,14 @@ export default function GameCanvas({
              shadow: 'rgba(4, 2, 8, 0.84)',
            });
            // Pulsing core - DIVA GEM
-           ctx.beginPath();
-           ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, 12 * (1 + Math.sin(frameCount.current * 0.1)), 0, Math.PI * 2);
-            ctx.fillStyle = stageTheme.bossCore;
-           ctx.shadowBlur = 30;
-            ctx.shadowColor = stageTheme.bossCore;
-           ctx.fill();
+           if (!minimalEffects) {
+             ctx.beginPath();
+             ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, 12 * (1 + Math.sin(frameCount.current * 0.1)), 0, Math.PI * 2);
+             ctx.fillStyle = stageTheme.bossCore;
+             ctx.shadowBlur = 30;
+             ctx.shadowColor = stageTheme.bossCore;
+             ctx.fill();
+           }
         } else {
            const spriteKey = (enemy.type as keyof typeof SPRITES) || 'SCOUT';
            const sprite = SPRITES[spriteKey] || SPRITES.SCOUT;
@@ -1803,7 +1902,7 @@ export default function GameCanvas({
         const visualY = enemy.y - enemy.height * 0.01 + recoilProgress * 2 + rumbleOffset;
         const groundLineY = visualY + visualHeight * 0.9;
 
-        ctx.shadowBlur = 14;
+        ctx.shadowBlur = lowEffects ? 6 : 14;
         ctx.shadowColor = groundPrimary;
 
         const groundShadow = ctx.createRadialGradient(
@@ -1860,7 +1959,7 @@ export default function GameCanvas({
 
         for (let wheelIndex = 0; wheelIndex < wheelCount; wheelIndex += 1) {
           const wheelX = wheelStartX + wheelIndex * wheelSpacing;
-          const wheelGradient = ctx.createRadialGradient(
+          ctx.fillStyle = minimalEffects ? `${groundPrimary}BB` : ctx.createRadialGradient(
             wheelX - wheelRadius * 0.2,
             wheelY - wheelRadius * 0.25,
             wheelRadius * 0.15,
@@ -1868,11 +1967,12 @@ export default function GameCanvas({
             wheelY,
             wheelRadius
           );
-          wheelGradient.addColorStop(0, 'rgba(255,255,255,0.38)');
-          wheelGradient.addColorStop(0.25, `${groundPrimary}BB`);
-          wheelGradient.addColorStop(1, 'rgba(12, 8, 12, 0.95)');
-
-          ctx.fillStyle = wheelGradient;
+          if (!minimalEffects) {
+            const wheelGradient = ctx.fillStyle as CanvasGradient;
+            wheelGradient.addColorStop(0, 'rgba(255,255,255,0.38)');
+            wheelGradient.addColorStop(0.25, `${groundPrimary}BB`);
+            wheelGradient.addColorStop(1, 'rgba(12, 8, 12, 0.95)');
+          }
           ctx.beginPath();
           ctx.arc(wheelX, wheelY, wheelRadius, 0, Math.PI * 2);
           ctx.fill();
@@ -1988,9 +2088,14 @@ export default function GameCanvas({
     particlesRef.current.forEach(particle => {
       ctx.globalAlpha = particle.life / particle.maxLife;
       ctx.fillStyle = particle.color;
-      ctx.beginPath();
-      ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
-      ctx.fill();
+      if (minimalEffects) {
+        const size = Math.max(1, particle.size);
+        ctx.fillRect(particle.x, particle.y, size, size);
+      } else {
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
     });
     ctx.globalAlpha = 1.0;
 
@@ -2035,7 +2140,7 @@ export default function GameCanvas({
         highlight: '#FFFFFF',
         shadow: 'rgba(8, 3, 16, 0.72)',
       });
-      ctx.shadowBlur = 15;
+      ctx.shadowBlur = lowEffects ? 0 : 15;
       ctx.shadowColor = pu.color;
       ctx.strokeRect(pu.x - 2, pu.y - 2, pu.width + 4, pu.height + 4);
     });
@@ -2060,10 +2165,15 @@ export default function GameCanvas({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
+        e.preventDefault();
+      }
       ensureAudioReady();
       keysRef.current[e.code] = true;
       if (gameState === 'START' && e.code === 'Space') {
         onGameStart();
+      } else if (gameState === 'GAME_OVER' && e.code === 'Space') {
+        onRestart();
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -2073,8 +2183,9 @@ export default function GameCanvas({
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault();
       ensureAudioReady();
-      if (gameState !== 'PLAYING') {
+      if (gameState !== 'PLAYING' && gameState !== 'LEVEL_UP') {
         if (gameState === 'START') onGameStart();
+        if (gameState === 'GAME_OVER') onRestart();
         return;
       }
 
@@ -2101,7 +2212,7 @@ export default function GameCanvas({
 
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault(); // Prevent scrolling AND selection
-      if (gameState !== 'PLAYING') return;
+      if (gameState !== 'PLAYING' && gameState !== 'LEVEL_UP') return;
       
       const { x, y } = getCanvasPoint(e);
       
@@ -2147,7 +2258,7 @@ export default function GameCanvas({
       }
       cancelAnimationFrame(requestRef.current);
     };
-  }, [ensureAudioReady, update, gameState, onGameStart, shootBlaster, dropBomb]);
+  }, [ensureAudioReady, update, gameState, onGameStart, onRestart, shootBlaster, dropBomb]);
 
   return (
     <div className="relative w-full h-full bg-black touch-none flex items-center justify-center">
@@ -2159,7 +2270,7 @@ export default function GameCanvas({
       />
       
       {/* Visual Touch Indicators (Optional, but helps user know where they can press) */}
-      {gameState === 'PLAYING' && (
+      {(gameState === 'PLAYING' || gameState === 'LEVEL_UP') && (
         <>
           <div className="absolute bottom-4 left-4 w-1/2 h-40 border-2 border-white/5 bg-white/5 rounded-2xl flex items-center justify-center opacity-30">
             <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Move Zone</span>

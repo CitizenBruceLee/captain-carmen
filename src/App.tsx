@@ -13,12 +13,14 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [level, setLevel] = useState(1);
+  const [runId, setRunId] = useState(0);
   const [bombs, setBombs] = useState(3);
   const [bombCharge, setBombCharge] = useState(1);
   const [comboCount, setComboCount] = useState(0);
   const [comboMultiplier, setComboMultiplier] = useState(1);
 
   const handleStart = useCallback(() => {
+    setRunId(prev => prev + 1);
     setGameState('PLAYING');
     setScore(0);
     setLives(3);
@@ -30,7 +32,8 @@ export default function App() {
   }, []);
 
   const handleRestart = useCallback(() => {
-    setGameState('START');
+    setRunId(prev => prev + 1);
+    setGameState('PLAYING');
     setScore(0);
     setLives(3);
     setLevel(1);
@@ -76,17 +79,20 @@ export default function App() {
         <div className="absolute bottom-1/4 right-1/4 w-[600px] h-[600px] bg-indigo-500/20 rounded-full blur-[150px] animate-pulse delay-700" />
       </div>
 
-      <GameCanvas 
-        gameState={gameState}
-        level={level}
-        onScoreUpdate={handleScoreUpdate}
-        onLivesUpdate={setLives}
-        onBombStateUpdate={handleBombStateUpdate}
-        onComboUpdate={handleComboUpdate}
-        onGameOver={handleGameOver}
-        onGameStart={handleStart}
-        onStateChange={handleStateChange}
-      />
+      <React.Fragment key={runId}>
+        <GameCanvas 
+          gameState={gameState}
+          level={level}
+          onScoreUpdate={handleScoreUpdate}
+          onLivesUpdate={setLives}
+          onBombStateUpdate={handleBombStateUpdate}
+          onComboUpdate={handleComboUpdate}
+          onGameOver={handleGameOver}
+          onGameStart={handleStart}
+          onRestart={handleRestart}
+          onStateChange={handleStateChange}
+        />
+      </React.Fragment>
       
       <GameUI 
         gameState={gameState}

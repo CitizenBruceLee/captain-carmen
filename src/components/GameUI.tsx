@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Heart, Stars, Trophy, Play, RotateCcw } from 'lucide-react';
 import { GameState } from '../types';
+import captainCarmenPortrait from '../assets/captain-carmen-portrait.svg';
 
 const STAGE_PRESENTATION = [
   {
@@ -121,9 +122,21 @@ export default function GameUI({
         </div>
         
         <div className="flex flex-col items-center text-center">
-          <h1 className="font-arcade text-[24px] font-black tracking-[0.01em] leading-[1.1] mb-2 bg-gradient-to-r from-[#FF0018] via-[#FFED00] to-[#86007D] bg-clip-text text-transparent">
-            CAPTAIN CARMEN
-          </h1>
+          <div className="flex items-center justify-center gap-3 mb-2">
+            {gameState === 'PLAYING' && (
+              <div className="shrink-0 border border-cyan-300/30 bg-black/35 p-1 shadow-[0_0_16px_rgba(0,255,255,0.14)]">
+                <img
+                  src={captainCarmenPortrait}
+                  alt="Captain Carmen portrait"
+                  className="block h-10 w-10 md:h-11 md:w-11 object-cover"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              </div>
+            )}
+            <h1 className="font-arcade text-[24px] font-black tracking-[0.01em] leading-[1.1] bg-gradient-to-r from-[#FF0018] via-[#FFED00] to-[#86007D] bg-clip-text text-transparent">
+              CAPTAIN CARMEN
+            </h1>
+          </div>
           <div className="font-arcade text-[8px] font-bold tracking-[0.1em] text-[#FFFF00] whitespace-nowrap">
             WAVE {level} • RADIANCY
           </div>
@@ -176,8 +189,16 @@ export default function GameUI({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 1.1 }}
-              className="pointer-events-auto flex flex-col items-center p-10 bg-white/5 border border-white/10 rounded-sm backdrop-blur-3xl max-w-lg text-center shadow-[0_0_100px_rgba(255,255,255,0.1)]"
+              className="pointer-events-auto flex flex-col items-center p-8 md:p-10 bg-white/5 border border-white/10 rounded-sm backdrop-blur-3xl max-w-xl text-center shadow-[0_0_100px_rgba(255,255,255,0.1)]"
             >
+              <div className="mb-6 border border-cyan-300/30 bg-black/25 p-2 shadow-[0_0_28px_rgba(0,255,255,0.12)]">
+                <img
+                  src={captainCarmenPortrait}
+                  alt="Captain Carmen portrait"
+                  className="block h-40 w-40 md:h-48 md:w-48 object-cover"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              </div>
               <div className="font-arcade text-[8px] tracking-[0.24em] text-[#FF10F0] mb-4">Good Luck Captain</div>
               <h1 className="font-arcade text-[30px] font-black tracking-[0.03em] leading-[1.22] mb-5">
                  Captain <br /> Carmen
@@ -210,6 +231,14 @@ export default function GameUI({
               animate={{ opacity: 1, scale: 1 }}
               className="pointer-events-auto flex flex-col items-center p-10 bg-black/60 border border-rose-500/40 rounded-sm backdrop-blur-2xl"
             >
+              <div className="mb-5 border border-rose-300/20 bg-black/35 p-2 shadow-[0_0_24px_rgba(255,16,240,0.14)]">
+                <img
+                  src={captainCarmenPortrait}
+                  alt="Captain Carmen portrait"
+                  className="block h-28 w-28 object-cover"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              </div>
               <div className="font-arcade text-[8px] tracking-[0.22em] text-rose-500 mb-4 font-black">Link Fractured</div>
               <h2 className="font-arcade text-[26px] font-black tracking-[0.02em] leading-[1.22] mb-7 text-center">
                 Game Over<br />Captain

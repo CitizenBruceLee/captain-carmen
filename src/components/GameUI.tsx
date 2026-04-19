@@ -112,8 +112,8 @@ export default function GameUI({
     <div className="absolute inset-0 pointer-events-none flex flex-col items-stretch justify-between p-8 font-arcade-body">
       {/* Side Detail Row */}
       <div className="absolute left-[15px] top-1/2 -translate-y-1/2 pointer-events-none">
-      <div className="font-arcade [writing-mode:vertical-rl] text-[7px] uppercase tracking-[0.32em] text-white/40 rotate-180">
-          SCROLLER PROTOCOL: XEVIUS JOY // MULTI-LAYER RADIANCE
+      <div className="font-arcade [writing-mode:vertical-rl] text-[6px] tracking-[0.14em] text-white/40 rotate-180">
+          proudly dedicated to the my daughter Carmen Trajkovic, with Love, Papa
         </div>
       </div>
 

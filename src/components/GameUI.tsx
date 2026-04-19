@@ -165,11 +165,11 @@ export default function GameUI({
               exit={{ opacity: 0, scale: 1.1 }}
               className="pointer-events-auto flex flex-col items-center p-10 bg-white/5 border border-white/10 rounded-sm backdrop-blur-3xl max-w-lg text-center shadow-[0_0_100px_rgba(255,255,255,0.1)]"
             >
-              <div className="font-arcade text-[8px] tracking-[0.28em] text-[#FF10F0] mb-4">Neural Link Established</div>
-              <h1 className="font-arcade text-[34px] font-black tracking-[0.04em] leading-[1.25] mb-6">
+              <div className="font-arcade text-[8px] tracking-[0.24em] text-[#FF10F0] mb-4">Good Luck Captain</div>
+              <h1 className="font-arcade text-[30px] font-black tracking-[0.03em] leading-[1.22] mb-5">
                  Captain <br /> Carmen
               </h1>
-              <p className="text-white/70 mb-8 text-[18px] leading-[1.02] tracking-[0.03em] max-w-sm">
+              <p className="text-white/70 mb-7 text-[16px] leading-[1.02] tracking-[0.03em] max-w-sm">
                 Initiate the protocol of joy. Spread the rainbow spectrum across the grey void of silence.
               </p>
               <button 
@@ -197,10 +197,10 @@ export default function GameUI({
               animate={{ opacity: 1, scale: 1 }}
               className="pointer-events-auto flex flex-col items-center p-10 bg-black/60 border border-rose-500/40 rounded-sm backdrop-blur-2xl"
             >
-              <div className="font-arcade text-[8px] tracking-[0.28em] text-rose-500 mb-4 font-black">Link Fractured</div>
-              <h2 className="font-arcade text-[34px] font-black tracking-[0.04em] leading-[1.25] mb-8">System <br /> Darkened</h2>
+              <div className="font-arcade text-[8px] tracking-[0.22em] text-rose-500 mb-4 font-black">Link Fractured</div>
+              <h2 className="font-arcade text-[30px] font-black tracking-[0.03em] leading-[1.22] mb-7">Game Over</h2>
               <div className="font-arcade text-[8px] tracking-[0.14em] text-white/40 mb-2">Final Resonance</div>
-              <div className="font-arcade text-[34px] font-black tabular-nums tracking-[0.03em] text-white mb-10">{score.toLocaleString()}</div>
+              <div className="font-arcade text-[28px] font-black tabular-nums tracking-[0.03em] text-white mb-9">{score.toLocaleString()}</div>
               <button 
                 onClick={onRestart}
                 className="font-arcade px-10 py-4 bg-rose-500 text-white text-[12px] tracking-[0.12em] hover:bg-rose-600 transition-all cursor-pointer shadow-2xl"

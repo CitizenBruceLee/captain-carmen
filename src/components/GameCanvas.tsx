@@ -97,6 +97,16 @@ type ExplosionOptions = {
   soundCue?: SoundCue | null;
 };
 
+const sharedAudioState: {
+  audioContext: AudioContext | null;
+  audioMasterGain: GainNode | null;
+  noiseBuffer: AudioBuffer | null;
+} = {
+  audioContext: null,
+  audioMasterGain: null,
+  noiseBuffer: null,
+};
+
 export default function GameCanvas({
   onScoreUpdate,
   onLivesUpdate,
@@ -194,6 +204,12 @@ export default function GameCanvas({
       return null;
     }
 
+    if (!audioContextRef.current && sharedAudioState.audioContext && sharedAudioState.audioMasterGain) {
+      audioContextRef.current = sharedAudioState.audioContext;
+      audioMasterGainRef.current = sharedAudioState.audioMasterGain;
+      noiseBufferRef.current = sharedAudioState.noiseBuffer;
+    }
+
     if (!audioContextRef.current) {
       const audioContext = new AudioContextCtor();
       const masterGain = audioContext.createGain();
@@ -203,6 +219,9 @@ export default function GameCanvas({
       audioContextRef.current = audioContext;
       audioMasterGainRef.current = masterGain;
       noiseBufferRef.current = createNoiseBuffer(audioContext);
+      sharedAudioState.audioContext = audioContext;
+      sharedAudioState.audioMasterGain = masterGain;
+      sharedAudioState.noiseBuffer = noiseBufferRef.current;
     }
 
     if (audioContextRef.current.state === 'suspended') {
@@ -666,13 +685,9 @@ export default function GameCanvas({
   };
 
   const closeAudio = useCallback(() => {
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      void audioContextRef.current.close();
-    }
-
-    audioContextRef.current = null;
-    audioMasterGainRef.current = null;
-    noiseBufferRef.current = null;
+    sharedAudioState.audioContext = audioContextRef.current;
+    sharedAudioState.audioMasterGain = audioMasterGainRef.current;
+    sharedAudioState.noiseBuffer = noiseBufferRef.current;
   }, []);
 
   // Initialize terrain
@@ -873,6 +888,7 @@ export default function GameCanvas({
   }, []);
 
   const spawnBoss = useCallback(() => {
+    const bossHealth = level === 1 ? 32 : level === 2 ? 42 : 50;
     const id = "BOSS_" + Math.random().toString(36).substr(2, 9);
     const newBoss: Enemy = {
       id,
@@ -885,8 +901,8 @@ export default function GameCanvas({
       type: 'BOSS',
       class: 'AIR',
       color: COLORS.NEON.PINK,
-      health: 50,
-      maxHealth: 50,
+      health: bossHealth,
+      maxHealth: bossHealth,
       points: 10000,
       phase: 0,
       lastFireTime: 0,
@@ -896,7 +912,7 @@ export default function GameCanvas({
     enemiesRef.current.push(newBoss);
     bossSpawningRef.current = false;
     playSound('bossSpawn');
-  }, [playSound]);
+  }, [level, playSound]);
 
   const shootBlaster = useCallback(() => {
     const p = playerRef.current;
@@ -1455,6 +1471,9 @@ export default function GameCanvas({
       } else if (enemy.type === 'BOSS') {
         const bossAnchorX = GAME_WIDTH / 2 - enemy.width / 2;
         const bossAnchorY = 96;
+        const bossSwing = level === 1 ? GAME_WIDTH * 0.18 : level === 2 ? GAME_WIDTH * 0.24 : GAME_WIDTH * 0.3;
+        const bossPhaseStep = level === 1 ? 0.009 : level === 2 ? 0.013 : 0.017;
+        const bossFloat = level === 1 ? 10 : 14;
 
         applyVelocity = false;
 
@@ -1462,9 +1481,12 @@ export default function GameCanvas({
           enemy.y = Math.min(bossAnchorY, enemy.y + enemy.vy);
           enemy.x += (bossAnchorX - enemy.x) * 0.12;
         } else {
-          enemy.phase += 0.02;
-          enemy.x = bossAnchorX + Math.sin(enemy.phase) * (GAME_WIDTH * 0.35);
-          enemy.y = bossAnchorY + Math.sin(enemy.phase * 0.5) * 18;
+          enemy.phase += bossPhaseStep;
+          const targetX = bossAnchorX + Math.sin(enemy.phase) * bossSwing;
+          const targetY = bossAnchorY + Math.sin(enemy.phase * 0.5) * bossFloat;
+
+          enemy.x += (targetX - enemy.x) * 0.08;
+          enemy.y += (targetY - enemy.y) * 0.1;
 
           // Phase transitions
           const hpRatio = enemy.health / enemy.maxHealth;
@@ -1674,16 +1696,17 @@ export default function GameCanvas({
     }
 
     // Draw Bomb Reticle
-    if (gameState === 'PLAYING') {
+    if (gameState === 'PLAYING' && p.bombStock >= 1) {
       ctx.save();
+      ctx.globalAlpha = 0.28;
       ctx.strokeStyle = stageTheme.reticle;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(p.bombX, p.bombY, 15, 0, Math.PI * 2);
+      ctx.arc(p.bombX, p.bombY, 11, 0, Math.PI * 2);
       ctx.stroke();
       
       // Pulsing crosshair
-      const s = 5 + Math.sin(frameCount.current * 0.1) * 3;
+      const s = 3 + Math.sin(frameCount.current * 0.1) * 1.5;
       ctx.beginPath();
       ctx.moveTo(p.bombX - s, p.bombY);
       ctx.lineTo(p.bombX + s, p.bombY);

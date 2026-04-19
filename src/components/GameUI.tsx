@@ -140,6 +140,19 @@ export default function GameUI({
       {/* Center Overlays */}
       <div className="flex-1 flex items-center justify-center">
         <AnimatePresence>
+          {comboCount > 1 && gameState === 'PLAYING' && (
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.92 }}
+              animate={{ opacity: 0.72, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 18, scale: 0.92 }}
+              className="absolute flex flex-col items-center text-center pointer-events-none"
+            >
+              <div className="font-arcade text-[7px] tracking-[0.2em] text-[#FFED00]/60 mb-2">Spectrum Chain</div>
+              <div className="font-arcade text-[18px] font-black tracking-[0.03em] text-white/75">x{comboMultiplier}</div>
+              <div className="text-[15px] text-white/45">{comboCount} linked takedowns</div>
+            </motion.div>
+          )}
+
           {showStageCard && gameState === 'PLAYING' && (
             <motion.div
               initial={{ opacity: 0, scale: 1.8, y: 8 }}
@@ -270,22 +283,7 @@ export default function GameUI({
           </div>
         </div>
 
-        <div className="flex flex-col items-center gap-3 pb-1">
-          <AnimatePresence>
-            {comboCount > 1 && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 12 }}
-                className="px-5 py-3 bg-white/5 border border-[#FFED00]/30 backdrop-blur-xl text-center"
-              >
-                <div className="font-arcade text-[7px] tracking-[0.2em] text-[#FFED00]/70 mb-2">Spectrum Chain</div>
-                <div className="font-arcade text-[18px] font-black tracking-[0.03em] text-white">x{comboMultiplier}</div>
-                <div className="text-[15px] text-white/60">{comboCount} linked takedowns</div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        <div className="w-[140px]" />
 
         <div className="flex flex-col items-end gap-3">
           <div className="font-arcade text-[8px] tracking-[0.16em] text-white/50">Bomb Fabricator</div>

@@ -2161,6 +2161,22 @@ export default function GameCanvas({
   }, [gameState, playSound]);
 
   useEffect(() => {
+    const unlockAudio = () => {
+      ensureAudioReady();
+    };
+
+    window.addEventListener('pointerdown', unlockAudio, { capture: true });
+    window.addEventListener('touchstart', unlockAudio, { capture: true, passive: true });
+    window.addEventListener('mousedown', unlockAudio, { capture: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio, true);
+      window.removeEventListener('touchstart', unlockAudio, true);
+      window.removeEventListener('mousedown', unlockAudio, true);
+    };
+  }, [ensureAudioReady]);
+
+  useEffect(() => {
     return () => {
       closeAudio();
     };

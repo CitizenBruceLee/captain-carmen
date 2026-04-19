@@ -97,6 +97,13 @@ type ExplosionOptions = {
   soundCue?: SoundCue | null;
 };
 
+type CollisionRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 const sharedAudioState: {
   audioContext: AudioContext | null;
   audioMasterGain: GainNode | null;
@@ -105,6 +112,54 @@ const sharedAudioState: {
   audioContext: null,
   audioMasterGain: null,
   noiseBuffer: null,
+};
+
+const spriteCanvasCache = new Map<string, HTMLCanvasElement>();
+const COLLISION_CELL_SIZE = 96;
+
+const rectsOverlap = (first: CollisionRect, second: CollisionRect) => {
+  return first.x < second.x + second.width
+    && first.x + first.width > second.x
+    && first.y < second.y + second.height
+    && first.y + first.height > second.y;
+};
+
+const getCollisionCellRange = (rect: CollisionRect) => {
+  const maxX = Math.max(rect.x, rect.x + rect.width);
+  const maxY = Math.max(rect.y, rect.y + rect.height);
+
+  return {
+    minCellX: Math.floor(rect.x / COLLISION_CELL_SIZE),
+    maxCellX: Math.floor(maxX / COLLISION_CELL_SIZE),
+    minCellY: Math.floor(rect.y / COLLISION_CELL_SIZE),
+    maxCellY: Math.floor(maxY / COLLISION_CELL_SIZE),
+  };
+};
+
+const getCollisionCellKey = (cellX: number, cellY: number) => `${cellX}:${cellY}`;
+
+const buildEnemyCollisionGrid = (enemies: Enemy[]) => {
+  const grid = new Map<string, number[]>();
+
+  for (let index = 0; index < enemies.length; index += 1) {
+    const enemy = enemies[index];
+    const { minCellX, maxCellX, minCellY, maxCellY } = getCollisionCellRange(enemy);
+
+    for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        const key = getCollisionCellKey(cellX, cellY);
+        const bucket = grid.get(key);
+
+        if (bucket) {
+          bucket.push(index);
+        } else {
+          grid.set(key, [index]);
+        }
+      }
+    }
+  }
+
+  return grid;
 };
 
 export default function GameCanvas({
@@ -644,8 +699,6 @@ export default function GameCanvas({
   ) => {
     const rows = sprite.length;
     const cols = sprite[0].length;
-    const pW = width / cols;
-    const pH = height / rows;
 
     const resolvedPalette: SpritePalette = typeof palette === 'string'
       ? {
@@ -656,32 +709,70 @@ export default function GameCanvas({
         }
       : palette;
 
-    sprite.forEach((row, ri) => {
-      for (let ci = 0; ci < row.length; ci++) {
-        const pixel = row[ci];
-        if (pixel === ' ') {
-          continue;
-        }
+    const cacheWidth = Math.max(1, Math.ceil(width));
+    const cacheHeight = Math.max(1, Math.ceil(height));
+    const cacheKey = [
+      sprite.join(''),
+      cacheWidth,
+      cacheHeight,
+      resolvedPalette.primary,
+      resolvedPalette.secondary,
+      resolvedPalette.highlight,
+      resolvedPalette.shadow,
+    ].join('|');
 
-        let fill = resolvedPalette.primary;
-        if (pixel === 'O') fill = resolvedPalette.secondary;
-        if (pixel === '+') fill = resolvedPalette.highlight;
-        if (pixel === '#') fill = resolvedPalette.shadow;
+    let spriteCanvas = spriteCanvasCache.get(cacheKey);
 
-        const drawX = x + ci * pW;
-        const drawY = y + ri * pH;
-        const pixelWidth = Math.max(pW - 1, 1);
-        const pixelHeight = Math.max(pH - 1, 1);
+    if (!spriteCanvas) {
+      spriteCanvas = document.createElement('canvas');
+      spriteCanvas.width = cacheWidth;
+      spriteCanvas.height = cacheHeight;
 
-        if (pixel !== '#') {
-          ctx.fillStyle = resolvedPalette.shadow;
-          ctx.fillRect(drawX + 1, drawY + 1, pixelWidth, pixelHeight);
-        }
-
-        ctx.fillStyle = fill;
-        ctx.fillRect(drawX, drawY, pixelWidth, pixelHeight);
+      const spriteCtx = spriteCanvas.getContext('2d');
+      if (!spriteCtx) {
+        return;
       }
-    });
+
+      spriteCtx.imageSmoothingEnabled = false;
+
+  const cachedCellWidth = cacheWidth / cols;
+  const cachedCellHeight = cacheHeight / rows;
+  const cachedPixelWidth = Math.max(cachedCellWidth - 1, 1);
+  const cachedPixelHeight = Math.max(cachedCellHeight - 1, 1);
+
+      for (let ri = 0; ri < rows; ri += 1) {
+        const row = sprite[ri];
+        for (let ci = 0; ci < row.length; ci += 1) {
+          const pixel = row[ci];
+          if (pixel === ' ') {
+            continue;
+          }
+
+          let fill = resolvedPalette.primary;
+          if (pixel === 'O') fill = resolvedPalette.secondary;
+          if (pixel === '+') fill = resolvedPalette.highlight;
+          if (pixel === '#') fill = resolvedPalette.shadow;
+
+          const drawX = ci * cachedCellWidth;
+          const drawY = ri * cachedCellHeight;
+
+          if (pixel !== '#') {
+            spriteCtx.fillStyle = resolvedPalette.shadow;
+            spriteCtx.fillRect(drawX + 1, drawY + 1, cachedPixelWidth, cachedPixelHeight);
+          }
+
+          spriteCtx.fillStyle = fill;
+          spriteCtx.fillRect(drawX, drawY, cachedPixelWidth, cachedPixelHeight);
+        }
+      }
+
+      spriteCanvasCache.set(cacheKey, spriteCanvas);
+    }
+
+    const previousSmoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(spriteCanvas, x, y, width, height);
+    ctx.imageSmoothingEnabled = previousSmoothing;
   };
 
   const closeAudio = useCallback(() => {
@@ -1374,17 +1465,16 @@ export default function GameCanvas({
     }
 
     // Update PowerUps
-    powerUpsRef.current.forEach((pu, idx) => {
+    for (let idx = powerUpsRef.current.length - 1; idx >= 0; idx -= 1) {
+      const pu = powerUpsRef.current[idx];
       pu.y += pu.vy;
-      if (pu.y > GAME_HEIGHT) powerUpsRef.current.splice(idx, 1);
+      if (pu.y > GAME_HEIGHT) {
+        powerUpsRef.current.splice(idx, 1);
+        continue;
+      }
       
       // Collection
-      if (
-        pu.x < p.x + p.width &&
-        pu.x + pu.width > p.x &&
-        pu.y < p.y + p.height &&
-        pu.y + pu.height > p.y
-      ) {
+      if (rectsOverlap(pu, p)) {
         p.hasAutoFire = true;
         p.weaponTimer = 10000; // 10 seconds
         powerUpsRef.current.splice(idx, 1);
@@ -1392,10 +1482,11 @@ export default function GameCanvas({
         createExplosion(pu.x + pu.width / 2, pu.y + pu.height / 2, COLORS.NEON.YELLOW);
         playSound('pickup');
       }
-    });
+    }
 
     // Update Projectiles
-    projectilesRef.current.forEach((proj, idx) => {
+    for (let idx = projectilesRef.current.length - 1; idx >= 0; idx -= 1) {
+      const proj = projectilesRef.current[idx];
       // ... missile tracking ...
       // Missile tracking
       if (proj.class === 'MISSILE' && proj.owner === 'enemy') {
@@ -1428,36 +1519,37 @@ export default function GameCanvas({
 
       // Mine behavior: static until triggered or scrolled off
       if (proj.class === 'MINE') {
-        const dist = Math.sqrt(Math.pow(p.x + p.width / 2 - proj.x, 2) + Math.pow(p.y + p.height / 2 - proj.y, 2));
-        if (dist < 80) {
+        const dx = p.x + p.width / 2 - proj.x;
+        const dy = p.y + p.height / 2 - proj.y;
+        if (dx * dx + dy * dy < 6400) {
           // Trigger mine - simple explosion or immediate damage
           createExplosion(proj.x, proj.y, COLORS.NEON.YELLOW);
           projectilesRef.current.splice(idx, 1);
+          continue;
         }
       }
 
       // Bounds check
       if (proj.y < -100 || proj.y > GAME_HEIGHT + 100 || (proj.class === 'BOMB' && proj.width < 1)) {
         projectilesRef.current.splice(idx, 1);
+        continue;
       }
 
       // Projectile vs Player collision
       if (
         p.invisibleTimer <= 0 &&
         proj.owner === 'enemy' &&
-        proj.x < p.x + p.width &&
-        proj.x + proj.width > p.x &&
-        proj.y < p.y + p.height &&
-        proj.y + proj.height > p.y
+        rectsOverlap(proj, p)
       ) {
         p.lives -= 1;
         projectilesRef.current.splice(idx, 1);
         handlePlayerDamage(p.x + p.width / 2, p.y + p.height / 2, time);
       }
-    });
+    }
 
     // Update Enemies
-    enemiesRef.current.forEach((enemy, eIdx) => {
+    for (let eIdx = enemiesRef.current.length - 1; eIdx >= 0; eIdx -= 1) {
+      const enemy = enemiesRef.current[eIdx];
       let applyVelocity = true;
 
       // Movement Patterns
@@ -1558,62 +1650,127 @@ export default function GameCanvas({
       if (
         p.invisibleTimer <= 0 &&
         enemy.class === 'AIR' &&
-        enemy.x < p.x + p.width &&
-        enemy.x + enemy.width > p.x &&
-        enemy.y < p.y + p.height &&
-        enemy.y + enemy.height > p.y
+        rectsOverlap(enemy, p)
       ) {
         p.lives -= 1;
         enemiesRef.current.splice(eIdx, 1);
         handlePlayerDamage(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, time);
+        continue;
       }
-
-      // Projectile vs Enemy collision
-      projectilesRef.current.forEach((proj, pIdx) => {
-        const isBlasterHit = (proj.class === 'BLASTER' || proj.class === 'LASER') && enemy.class === 'AIR';
-        const isBombHit = proj.class === 'BOMB' && enemy.class === 'GROUND' && proj.width < BOMB_WIDTH * 0.6; // Bomb must be "low" enough
-
-        if (
-          (isBlasterHit || isBombHit) &&
-          proj.x < enemy.x + enemy.width &&
-          proj.x + proj.width > enemy.x &&
-          proj.y < enemy.y + enemy.height &&
-          proj.y + proj.height > enemy.y
-        ) {
-          enemy.health -= proj.damage ?? 1;
-
-          if (proj.class === 'LASER' && (proj.penetration ?? 0) > 0) {
-            proj.penetration = (proj.penetration ?? 0) - 1;
-          } else {
-            projectilesRef.current.splice(pIdx, 1);
-          }
-          
-          if (enemy.health <= 0) {
-            registerKill(enemy, proj.class, time);
-            createExplosion(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, proj.color);
-            
-            // Random powerup drop
-            if (Math.random() < 0.1) {
-              spawnPowerUp(enemy.x, enemy.y);
-            }
-
-            enemiesRef.current.splice(eIdx, 1);
-            
-            if (enemy.type === 'BOSS') {
-              expireBossMissiles(time);
-               onStateChange('LEVEL_UP');
-            } else {
-               enemiesDefeatedInLevel.current += 1;
-            }
-          }
-        }
-      });
 
       // Bounds check
       if (enemy.y > GAME_HEIGHT + 50) {
         enemiesRef.current.splice(eIdx, 1);
       }
-    });
+    }
+
+    const enemyCollisionGrid = buildEnemyCollisionGrid(enemiesRef.current);
+    const removedEnemyFlags = new Uint8Array(enemiesRef.current.length);
+    const removedProjectileFlags = new Uint8Array(projectilesRef.current.length);
+    const enemyCollisionMarks = new Int32Array(enemiesRef.current.length);
+    let removedEnemyCount = 0;
+    let removedProjectileCount = 0;
+    let collisionQueryId = 1;
+
+    for (let projectileIndex = projectilesRef.current.length - 1; projectileIndex >= 0; projectileIndex -= 1) {
+      const proj = projectilesRef.current[projectileIndex];
+      const hitsAirTargets = proj.owner === 'player' && (proj.class === 'BLASTER' || proj.class === 'LASER');
+      const hitsGroundTargets = proj.owner === 'player' && proj.class === 'BOMB' && proj.width < BOMB_WIDTH * 0.6;
+
+      if (!hitsAirTargets && !hitsGroundTargets) {
+        continue;
+      }
+
+      const queryId = collisionQueryId;
+      collisionQueryId += 1;
+      let projectileConsumed = false;
+      const { minCellX, maxCellX, minCellY, maxCellY } = getCollisionCellRange(proj);
+
+      for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+        for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+          const bucket = enemyCollisionGrid.get(getCollisionCellKey(cellX, cellY));
+          if (!bucket) {
+            continue;
+          }
+
+          for (let bucketIndex = 0; bucketIndex < bucket.length; bucketIndex += 1) {
+            const enemyIndex = bucket[bucketIndex];
+            if (enemyCollisionMarks[enemyIndex] === queryId || removedEnemyFlags[enemyIndex] === 1) {
+              continue;
+            }
+
+            enemyCollisionMarks[enemyIndex] = queryId;
+            const enemy = enemiesRef.current[enemyIndex];
+            if (!enemy) {
+              continue;
+            }
+
+            if (hitsAirTargets && enemy.class !== 'AIR') {
+              continue;
+            }
+
+            if (hitsGroundTargets && enemy.class !== 'GROUND') {
+              continue;
+            }
+
+            if (!rectsOverlap(proj, enemy)) {
+              continue;
+            }
+
+            enemy.health -= proj.damage ?? 1;
+
+            if (proj.class === 'LASER' && (proj.penetration ?? 0) > 0) {
+              proj.penetration = (proj.penetration ?? 0) - 1;
+            } else if (removedProjectileFlags[projectileIndex] === 0) {
+              removedProjectileFlags[projectileIndex] = 1;
+              removedProjectileCount += 1;
+              projectileConsumed = true;
+            }
+
+            if (enemy.health <= 0) {
+              registerKill(enemy, proj.class, time);
+              createExplosion(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, proj.color);
+
+              if (Math.random() < 0.1) {
+                spawnPowerUp(enemy.x, enemy.y);
+              }
+
+              if (removedEnemyFlags[enemyIndex] === 0) {
+                removedEnemyFlags[enemyIndex] = 1;
+                removedEnemyCount += 1;
+              }
+
+              if (enemy.type === 'BOSS') {
+                expireBossMissiles(time);
+                onStateChange('LEVEL_UP');
+              } else {
+                enemiesDefeatedInLevel.current += 1;
+              }
+            }
+
+            if (projectileConsumed) {
+              break;
+            }
+          }
+
+          if (projectileConsumed) {
+            break;
+          }
+        }
+
+        if (projectileConsumed) {
+          break;
+        }
+      }
+    }
+
+    if (removedProjectileCount > 0) {
+      projectilesRef.current = projectilesRef.current.filter((_, index) => removedProjectileFlags[index] === 0);
+    }
+
+    if (removedEnemyCount > 0) {
+      enemiesRef.current = enemiesRef.current.filter((_, index) => removedEnemyFlags[index] === 0);
+    }
 
     // Update Particles
     updateParticles();

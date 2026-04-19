@@ -160,12 +160,12 @@ export default function GameUI({
               exit={{ opacity: 0, scale: 0.65, y: -10 }}
               className="absolute flex flex-col items-center text-center"
             >
-              <div className="font-arcade text-[8px] tracking-[0.3em] text-cyan-200/55 mb-3 font-black">{stageCard.kicker}</div>
-              <div className="font-arcade text-[12px] tracking-[0.45em] text-cyan-300/45 mb-4 font-black animate-pulse">INCOMING</div>
-              <h2 className="font-arcade text-[34px] font-black tracking-[0.03em] leading-[1.25] text-white/18 drop-shadow-[0_0_18px_rgba(0,255,255,0.22)] text-center">
+              <div className="font-arcade text-[6px] tracking-[0.24em] text-cyan-200/55 mb-2 font-black">{stageCard.kicker}</div>
+              <div className="font-arcade text-[8px] tracking-[0.32em] text-cyan-300/45 mb-3 font-black animate-pulse">INCOMING</div>
+              <h2 className="font-arcade text-[20px] font-black tracking-[0.03em] leading-[1.2] text-white/18 drop-shadow-[0_0_14px_rgba(0,255,255,0.18)] text-center">
                 {stageCard.title}
               </h2>
-              <div className="mt-4 text-[16px] text-white/40 max-w-xl text-center leading-[1.05]">
+              <div className="mt-3 text-[11px] text-white/40 max-w-md text-center leading-[1.1]">
                 {stageCard.subtitle}
               </div>
             </motion.div>
@@ -232,9 +232,9 @@ export default function GameUI({
               exit={{ opacity: 0, scale: 0.5 }}
               className="pointer-events-none flex flex-col items-center"
             >
-              <div className="font-arcade text-[8px] tracking-[0.3em] text-rose-300/80 mb-3 font-black">{bossCard.kicker}</div>
-              <div className="font-arcade text-[12px] tracking-[0.45em] text-rose-500 mb-4 font-black animate-pulse">WARNING</div>
-              <h2 className="font-arcade text-[34px] font-black tracking-[0.04em] leading-[1.25] text-rose-600 drop-shadow-[0_0_20px_rgba(255,16,240,0.8)] text-center">
+              <div className="font-arcade text-[6px] tracking-[0.24em] text-rose-300/80 mb-2 font-black">{bossCard.kicker}</div>
+              <div className="font-arcade text-[8px] tracking-[0.32em] text-rose-500 mb-3 font-black animate-pulse">WARNING</div>
+              <h2 className="font-arcade text-[21px] font-black tracking-[0.04em] leading-[1.18] text-rose-600 drop-shadow-[0_0_14px_rgba(255,16,240,0.5)] text-center">
                 {bossTitleLineOne}
                 {bossTitleLineTwo && (
                   <>
@@ -243,7 +243,7 @@ export default function GameUI({
                   </>
                 )}
               </h2>
-              <div className="mt-4 text-[16px] text-white/55 max-w-xl text-center leading-[1.05]">
+              <div className="mt-3 text-[11px] text-white/55 max-w-md text-center leading-[1.1]">
                 {bossCard.subtitle}
               </div>
             </motion.div>
@@ -256,11 +256,11 @@ export default function GameUI({
               exit={{ opacity: 0, scale: 0.8 }}
               className="pointer-events-none flex flex-col items-center"
             >
-              <div className="font-arcade text-[8px] tracking-[0.26em] text-cyan-200/55 mb-4 font-bold">Resonance Reached</div>
-              <h2 className="font-arcade text-[40px] font-black tracking-[0.04em] leading-[1.25] text-white/22 drop-shadow-[0_0_18px_rgba(255,255,255,0.08)]">
+              <div className="font-arcade text-[6px] tracking-[0.22em] text-cyan-200/55 mb-3 font-bold">Resonance Reached</div>
+              <h2 className="font-arcade text-[22px] font-black tracking-[0.04em] leading-[1.18] text-white/22 drop-shadow-[0_0_12px_rgba(255,255,255,0.06)] text-center">
                 WAVE <br /> SECURED
               </h2>
-              <div className="mt-6 text-white/35 text-[16px] leading-[1.05]">Sector cleared. Stabilizing link...</div>
+              <div className="mt-3 text-white/35 text-[11px] leading-[1.1]">Sector cleared. Stabilizing link...</div>
             </motion.div>
           )}
         </AnimatePresence>

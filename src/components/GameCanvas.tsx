@@ -436,80 +436,87 @@ export default function GameCanvas({
     switch (cue) {
       case 'blaster':
         if (!shouldPlaySound(cue, 65)) return;
-        playTone(audioContext, masterGain, 1320, 0.04, { type: 'square', volume: 0.05, slideTo: 760, when: now });
-        playTone(audioContext, masterGain, 880, 0.028, { type: 'square', volume: 0.026, when: now + 0.008, slideTo: 660 });
+        playTone(audioContext, masterGain, 1480, 0.024, { type: 'square', volume: 0.04, slideTo: 1120, when: now });
+        playTone(audioContext, masterGain, 1180, 0.02, { type: 'square', volume: 0.025, slideTo: 900, when: now + 0.012 });
         break;
       case 'laser':
         if (!shouldPlaySound(cue, 70)) return;
-        playTone(audioContext, masterGain, 1680, 0.065, { type: 'square', volume: 0.045, slideTo: 1120, when: now });
-        playTone(audioContext, masterGain, 2240, 0.045, { type: 'triangle', volume: 0.024, when: now + 0.006, slideTo: 1760 });
+        playTone(audioContext, masterGain, 1760, 0.028, { type: 'square', volume: 0.038, slideTo: 1360, when: now });
+        playTone(audioContext, masterGain, 1320, 0.026, { type: 'square', volume: 0.03, slideTo: 980, when: now + 0.018 });
+        playTone(audioContext, masterGain, 1980, 0.03, { type: 'triangle', volume: 0.018, slideTo: 1580, when: now + 0.034 });
         break;
       case 'bomb':
         if (!shouldPlaySound(cue, 180)) return;
-        playTone(audioContext, masterGain, 210, 0.16, { type: 'square', volume: 0.06, slideTo: 72, when: now });
-        playTone(audioContext, masterGain, 96, 0.24, { type: 'triangle', volume: 0.05, slideTo: 40, when: now + 0.02 });
-        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.045, filterFrequency: 420, when: now + 0.025 });
+        playTone(audioContext, masterGain, 260, 0.055, { type: 'square', volume: 0.05, slideTo: 180, when: now });
+        playTone(audioContext, masterGain, 180, 0.06, { type: 'square', volume: 0.048, slideTo: 124, when: now + 0.05 });
+        playTone(audioContext, masterGain, 124, 0.085, { type: 'square', volume: 0.052, slideTo: 64, when: now + 0.1 });
+        playNoiseBurst(audioContext, masterGain, 0.11, { volume: 0.04, filterFrequency: 360, when: now + 0.12 });
         break;
       case 'enemyShot':
         if (!shouldPlaySound(cue, 120)) return;
-        playTone(audioContext, masterGain, 520, 0.06, { type: 'square', volume: 0.032, slideTo: 280, when: now });
+        playTone(audioContext, masterGain, 760, 0.026, { type: 'square', volume: 0.024, slideTo: 520, when: now });
+        playTone(audioContext, masterGain, 610, 0.022, { type: 'square', volume: 0.018, slideTo: 420, when: now + 0.01 });
         break;
       case 'explosion':
         if (!shouldPlaySound(cue, 90)) return;
-        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.085, filterFrequency: 980, when: now });
-        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.055, filterFrequency: 420, when: now + 0.018 });
-        playTone(audioContext, masterGain, 180, 0.16, { type: 'square', volume: 0.045, slideTo: 52, when: now });
-        playTone(audioContext, masterGain, 92, 0.22, { type: 'triangle', volume: 0.04, slideTo: 36, when: now + 0.01 });
+        playNoiseBurst(audioContext, masterGain, 0.085, { volume: 0.07, filterFrequency: 1200, when: now });
+        playTone(audioContext, masterGain, 220, 0.06, { type: 'square', volume: 0.038, slideTo: 130, when: now });
+        playTone(audioContext, masterGain, 146, 0.08, { type: 'square', volume: 0.036, slideTo: 82, when: now + 0.022 });
+        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.05, filterFrequency: 420, when: now + 0.03 });
+        playTone(audioContext, masterGain, 84, 0.11, { type: 'triangle', volume: 0.03, slideTo: 42, when: now + 0.05 });
         break;
       case 'pickup':
         if (!shouldPlaySound(cue, 160)) return;
-        playTone(audioContext, masterGain, 660, 0.06, { type: 'square', volume: 0.04, when: now });
-        playTone(audioContext, masterGain, 990, 0.07, { type: 'square', volume: 0.038, when: now + 0.045 });
-        playTone(audioContext, masterGain, 1320, 0.09, { type: 'triangle', volume: 0.03, when: now + 0.09 });
+        playTone(audioContext, masterGain, 523.25, 0.04, { type: 'square', volume: 0.028, when: now });
+        playTone(audioContext, masterGain, 659.25, 0.04, { type: 'square', volume: 0.03, when: now + 0.035 });
+        playTone(audioContext, masterGain, 783.99, 0.05, { type: 'square', volume: 0.03, when: now + 0.07 });
+        playTone(audioContext, masterGain, 1046.5, 0.08, { type: 'triangle', volume: 0.026, when: now + 0.11 });
         break;
       case 'playerExplosion':
         if (!shouldPlaySound(cue, 250)) return;
-        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.09, filterFrequency: 640, when: now });
-        playNoiseBurst(audioContext, masterGain, 0.34, { volume: 0.07, filterFrequency: 220, when: now + 0.018 });
-        playTone(audioContext, masterGain, 210, 0.26, { type: 'square', volume: 0.06, slideTo: 48, when: now, detune: -8 });
-        playTone(audioContext, masterGain, 164, 0.3, { type: 'square', volume: 0.045, slideTo: 36, when: now + 0.012, detune: 10 });
-        playTone(audioContext, masterGain, 72, 0.42, { type: 'triangle', volume: 0.05, slideTo: 18, when: now + 0.03 });
+        playNoiseBurst(audioContext, masterGain, 0.11, { volume: 0.085, filterFrequency: 760, when: now });
+        playTone(audioContext, masterGain, 240, 0.08, { type: 'square', volume: 0.05, slideTo: 150, when: now, detune: -12 });
+        playTone(audioContext, masterGain, 174, 0.11, { type: 'square', volume: 0.044, slideTo: 96, when: now + 0.03, detune: 14 });
+        playNoiseBurst(audioContext, masterGain, 0.18, { volume: 0.06, filterFrequency: 300, when: now + 0.055 });
+        playTone(audioContext, masterGain, 96, 0.24, { type: 'triangle', volume: 0.038, slideTo: 28, when: now + 0.075 });
         break;
       case 'gameOverExplosion':
         if (!shouldPlaySound(cue, 900)) return;
-        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.12, filterFrequency: 880, when: now });
-        playNoiseBurst(audioContext, masterGain, 0.58, { volume: 0.08, filterFrequency: 260, when: now + 0.03 });
-        playTone(audioContext, masterGain, 190, 0.5, { type: 'square', volume: 0.085, slideTo: 34, when: now });
-        playTone(audioContext, masterGain, 96, 0.62, { type: 'triangle', volume: 0.06, slideTo: 24, when: now + 0.04 });
-        playTone(audioContext, masterGain, 420, 0.2, { type: 'square', volume: 0.03, slideTo: 120, when: now + 0.07 });
+        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.095, filterFrequency: 960, when: now });
+        playTone(audioContext, masterGain, 220, 0.12, { type: 'square', volume: 0.06, slideTo: 132, when: now });
+        playTone(audioContext, masterGain, 164, 0.16, { type: 'square', volume: 0.05, slideTo: 88, when: now + 0.05 });
+        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.07, filterFrequency: 320, when: now + 0.08 });
+        playTone(audioContext, masterGain, 92, 0.34, { type: 'triangle', volume: 0.046, slideTo: 22, when: now + 0.12 });
         break;
       case 'bossAlert':
         if (!shouldPlaySound(cue, 2200)) return;
-        playTone(audioContext, masterGain, 220, 0.14, { type: 'square', volume: 0.04, when: now });
-        playTone(audioContext, masterGain, 247, 0.14, { type: 'square', volume: 0.04, when: now + 0.16 });
-        playTone(audioContext, masterGain, 294, 0.18, { type: 'square', volume: 0.045, when: now + 0.32 });
-        playTone(audioContext, masterGain, 147, 0.36, { type: 'triangle', volume: 0.03, when: now });
+        playTone(audioContext, masterGain, 196, 0.08, { type: 'square', volume: 0.032, when: now });
+        playTone(audioContext, masterGain, 196, 0.08, { type: 'square', volume: 0.032, when: now + 0.14 });
+        playTone(audioContext, masterGain, 247, 0.12, { type: 'square', volume: 0.036, when: now + 0.3 });
+        playTone(audioContext, masterGain, 123.47, 0.34, { type: 'triangle', volume: 0.026, when: now });
         break;
       case 'bossSpawn':
         if (!shouldPlaySound(cue, 1200)) return;
-        playTone(audioContext, masterGain, 140, 0.22, { type: 'square', volume: 0.05, slideTo: 280, when: now });
-        playTone(audioContext, masterGain, 176, 0.22, { type: 'square', volume: 0.042, slideTo: 352, when: now + 0.08 });
-        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.035, filterFrequency: 1100, when: now + 0.12 });
+        playTone(audioContext, masterGain, 110, 0.14, { type: 'square', volume: 0.042, slideTo: 164, when: now });
+        playTone(audioContext, masterGain, 146.83, 0.14, { type: 'square', volume: 0.04, slideTo: 220, when: now + 0.1 });
+        playTone(audioContext, masterGain, 196, 0.18, { type: 'square', volume: 0.042, slideTo: 294, when: now + 0.22 });
+        playNoiseBurst(audioContext, masterGain, 0.08, { volume: 0.03, filterFrequency: 900, when: now + 0.2 });
         break;
       case 'bossDown':
         if (!shouldPlaySound(cue, 1600)) return;
-        playNoiseBurst(audioContext, masterGain, 0.2, { volume: 0.08, filterFrequency: 680, when: now });
-        playNoiseBurst(audioContext, masterGain, 0.42, { volume: 0.075, filterFrequency: 190, when: now + 0.06 });
-        playTone(audioContext, masterGain, 196, 0.22, { type: 'square', volume: 0.075, when: now, slideTo: 110 });
-        playTone(audioContext, masterGain, 110, 0.34, { type: 'square', volume: 0.065, when: now + 0.08, slideTo: 55 });
-        playTone(audioContext, masterGain, 55, 0.54, { type: 'triangle', volume: 0.07, when: now + 0.14, slideTo: 22 });
+        playNoiseBurst(audioContext, masterGain, 0.11, { volume: 0.09, filterFrequency: 760, when: now });
+        playTone(audioContext, masterGain, 196, 0.1, { type: 'square', volume: 0.06, slideTo: 128, when: now });
+        playTone(audioContext, masterGain, 130.81, 0.14, { type: 'square', volume: 0.058, slideTo: 82.41, when: now + 0.08 });
+        playNoiseBurst(audioContext, masterGain, 0.18, { volume: 0.07, filterFrequency: 300, when: now + 0.14 });
+        playTone(audioContext, masterGain, 82.41, 0.28, { type: 'triangle', volume: 0.05, slideTo: 24, when: now + 0.18 });
         break;
       case 'waveClear':
         if (!shouldPlaySound(cue, 2200)) return;
-        playTone(audioContext, masterGain, 523.25, 0.1, { type: 'square', volume: 0.04, when: now });
-        playTone(audioContext, masterGain, 659.25, 0.1, { type: 'square', volume: 0.04, when: now + 0.1 });
-        playTone(audioContext, masterGain, 783.99, 0.12, { type: 'square', volume: 0.045, when: now + 0.2 });
-        playTone(audioContext, masterGain, 1046.5, 0.24, { type: 'triangle', volume: 0.035, when: now + 0.34, slideTo: 1318.51 });
+        playTone(audioContext, masterGain, 523.25, 0.05, { type: 'square', volume: 0.03, when: now });
+        playTone(audioContext, masterGain, 659.25, 0.05, { type: 'square', volume: 0.03, when: now + 0.045 });
+        playTone(audioContext, masterGain, 783.99, 0.06, { type: 'square', volume: 0.032, when: now + 0.09 });
+        playTone(audioContext, masterGain, 1046.5, 0.09, { type: 'square', volume: 0.034, when: now + 0.145 });
+        playTone(audioContext, masterGain, 1318.51, 0.16, { type: 'triangle', volume: 0.03, when: now + 0.22 });
         break;
       default:
         break;

@@ -198,7 +198,9 @@ export default function GameUI({
               className="pointer-events-auto flex flex-col items-center p-10 bg-black/60 border border-rose-500/40 rounded-sm backdrop-blur-2xl"
             >
               <div className="font-arcade text-[8px] tracking-[0.22em] text-rose-500 mb-4 font-black">Link Fractured</div>
-              <h2 className="font-arcade text-[30px] font-black tracking-[0.03em] leading-[1.22] mb-7">Game Over</h2>
+              <h2 className="font-arcade text-[26px] font-black tracking-[0.02em] leading-[1.22] mb-7 text-center">
+                Game Over<br />Captain
+              </h2>
               <div className="font-arcade text-[8px] tracking-[0.14em] text-white/40 mb-2">Final Resonance</div>
               <div className="font-arcade text-[28px] font-black tabular-nums tracking-[0.03em] text-white mb-9">{score.toLocaleString()}</div>
               <button 

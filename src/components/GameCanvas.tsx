@@ -498,6 +498,9 @@ export default function GameCanvas({
 
   // Touch Handling State
   const touchState = useRef({
+    moveTouchId: null as number | null,
+    moveLastX: 0,
+    moveLastMotionAt: 0,
     moveDirection: 0,
     fireActive: false,
     bombPressed: false,
@@ -1224,7 +1227,11 @@ export default function GameCanvas({
     p.bombX = p.x + p.width / 2;
     p.bombY = p.y - BOMB_DISTANCE;
     
-    // Touch Movement (bottom-left zone split into left/right)
+    if (touchState.current.moveTouchId !== null && time - touchState.current.moveLastMotionAt > 90) {
+      touchState.current.moveDirection = 0;
+    }
+
+    // Touch Movement (drag left/right in bottom-left zone)
     if (touchState.current.moveDirection < 0) p.x -= PLAYER_SPEED;
     if (touchState.current.moveDirection > 0) p.x += PLAYER_SPEED;
     
@@ -2177,10 +2184,13 @@ export default function GameCanvas({
       const scaleY = canvas.height / rect.height;
       const zoneTop = GAME_HEIGHT * 0.6;
       const moveZoneEnd = GAME_WIDTH * 0.5;
-      const moveSplit = GAME_WIDTH * 0.25;
       const bombSplit = GAME_WIDTH * 0.75;
+      const moveThreshold = 6;
 
+      let nextMoveTouchId: number | null = null;
+      let nextMoveX = touchState.current.moveLastX;
       let moveDirection = 0;
+      let moveDetectedAt = touchState.current.moveLastMotionAt;
       let fireActive = false;
       let bombPressed = false;
 
@@ -2194,7 +2204,18 @@ export default function GameCanvas({
         }
 
         if (x < moveZoneEnd) {
-          moveDirection = x < moveSplit ? -1 : 1;
+          if (nextMoveTouchId === null) {
+            nextMoveTouchId = touch.identifier;
+            nextMoveX = x;
+
+            if (touchState.current.moveTouchId === touch.identifier) {
+              const deltaX = x - touchState.current.moveLastX;
+              if (Math.abs(deltaX) >= moveThreshold) {
+                moveDirection = deltaX < 0 ? -1 : 1;
+                moveDetectedAt = performance.now();
+              }
+            }
+          }
         } else if (x < bombSplit) {
           bombPressed = true;
         } else {
@@ -2211,9 +2232,17 @@ export default function GameCanvas({
         touchState.current.lastFireTime = performance.now();
       }
 
+      touchState.current.moveTouchId = nextMoveTouchId;
+      touchState.current.moveLastX = nextMoveX;
+      touchState.current.moveLastMotionAt = nextMoveTouchId === null ? 0 : moveDetectedAt;
       touchState.current.moveDirection = moveDirection;
       touchState.current.fireActive = fireActive;
       touchState.current.bombPressed = bombPressed;
+
+      if (nextMoveTouchId === null) {
+        touchState.current.moveLastX = 0;
+        touchState.current.moveLastMotionAt = 0;
+      }
 
       if (!fireActive) {
         touchState.current.lastFireTime = 0;

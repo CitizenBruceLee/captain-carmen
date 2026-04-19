@@ -227,7 +227,7 @@ export default function GameUI({
                 </div>
                 <div className="border-t border-white/10 pt-4 flex flex-col gap-2">
                   <span className="font-arcade text-[8px]">Tactical Array</span>
-                  <span className="text-white/80 text-[15px]">Blaster & Bomb</span>
+                  <span className="text-white/80 text-[15px]">Space / Z X C</span>
                 </div>
               </div>
             </motion.div>

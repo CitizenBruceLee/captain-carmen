@@ -1462,9 +1462,9 @@ export default function GameCanvas({
       shootBlaster();
     }
     
-    // Bomb (Command / B) - Manual
-    const bombPressed = !!(keysRef.current['MetaLeft'] || keysRef.current['MetaRight'] || keysRef.current['KeyB']);
-    const bombJustPressed = bombPressed && !(lastKeysRef.current['MetaLeft'] || lastKeysRef.current['MetaRight'] || lastKeysRef.current['KeyB']);
+    // Bomb (Z / X / C) - Manual
+    const bombPressed = !!(keysRef.current['KeyZ'] || keysRef.current['KeyX'] || keysRef.current['KeyC']);
+    const bombJustPressed = bombPressed && !(lastKeysRef.current['KeyZ'] || lastKeysRef.current['KeyX'] || lastKeysRef.current['KeyC']);
 
     if (bombJustPressed) {
       dropBomb();
@@ -2592,9 +2592,6 @@ export default function GameCanvas({
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
-        e.preventDefault();
-      }
       unlockAudio();
       keysRef.current[e.code] = true;
       if (gameState === 'START' && e.code === 'Space') {

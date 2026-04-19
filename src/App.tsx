@@ -11,6 +11,7 @@ import { GameState } from './types';
 export default function App() {
   const [gameState, setGameState] = useState<GameState>('START');
   const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
   const [lives, setLives] = useState(3);
   const [level, setLevel] = useState(1);
   const [runId, setRunId] = useState(0);
@@ -49,6 +50,7 @@ export default function App() {
 
   const handleScoreUpdate = useCallback((newScore: number) => {
     setScore(newScore);
+    setHighScore((currentHighScore) => Math.max(currentHighScore, newScore));
   }, []);
 
   const handleBombStateUpdate = useCallback((nextBombs: number, nextCharge: number) => {
@@ -97,6 +99,7 @@ export default function App() {
       <GameUI 
         gameState={gameState}
         score={score}
+        highScore={highScore}
         lives={lives}
         level={level}
         bombs={bombs}

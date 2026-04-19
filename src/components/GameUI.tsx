@@ -48,6 +48,7 @@ const BOSS_PRESENTATION = [
 interface GameUIProps {
   gameState: GameState;
   score: number;
+  highScore: number;
   lives: number;
   level: number;
   bombs: number;
@@ -61,6 +62,7 @@ interface GameUIProps {
 export default function GameUI({ 
   gameState, 
   score, 
+  highScore,
   lives, 
   level, 
   bombs,
@@ -150,7 +152,7 @@ export default function GameUI({
         <div className="flex flex-col items-end text-right">
           <span className="font-arcade text-[7px] tracking-[0.18em] text-[#00FFFF] mb-1">HIGH SCORE</span>
           <span className="font-arcade text-[18px] font-black tabular-nums leading-none tracking-tight">
-            {Math.max(score, 1240000).toLocaleString()}
+            {highScore.toLocaleString('en-US', { minimumIntegerDigits: 6 })}
           </span>
         </div>
       </div>

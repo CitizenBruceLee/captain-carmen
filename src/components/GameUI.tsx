@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Heart, Stars, Trophy, Play, RotateCcw } from 'lucide-react';
 import { GameState } from '../types';
@@ -72,6 +72,11 @@ export default function GameUI({
 }: GameUIProps) {
   const [showStageCard, setShowStageCard] = useState(false);
   const announcedLevelRef = useRef(0);
+  const requestAudioUnlock = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('captain-carmen:unlock-audio'));
+    }
+  }, []);
 
   const stageCard = STAGE_PRESENTATION[Math.min(level - 1, STAGE_PRESENTATION.length - 1)];
   const bossCard = BOSS_PRESENTATION[Math.min(level - 1, BOSS_PRESENTATION.length - 1)];
@@ -207,6 +212,9 @@ export default function GameUI({
                 Initiate the protocol of joy. Spread the rainbow spectrum across the grey void of silence.
               </p>
               <button 
+                onPointerDown={requestAudioUnlock}
+                onMouseDown={requestAudioUnlock}
+                onTouchStart={requestAudioUnlock}
                 onClick={onStart}
                 className="font-arcade w-full py-5 bg-white text-black text-[12px] tracking-[0.12em] hover:bg-[#00FFFF] hover:scale-[1.02] transition-all cursor-pointer"
               >
@@ -246,6 +254,9 @@ export default function GameUI({
               <div className="font-arcade text-[8px] tracking-[0.14em] text-white/40 mb-2">Final Resonance</div>
               <div className="font-arcade text-[28px] font-black tabular-nums tracking-[0.03em] text-white mb-9">{score.toLocaleString()}</div>
               <button 
+                onPointerDown={requestAudioUnlock}
+                onMouseDown={requestAudioUnlock}
+                onTouchStart={requestAudioUnlock}
                 onClick={onRestart}
                 className="font-arcade px-10 py-4 bg-rose-500 text-white text-[12px] tracking-[0.12em] hover:bg-rose-600 transition-all cursor-pointer shadow-2xl"
               >

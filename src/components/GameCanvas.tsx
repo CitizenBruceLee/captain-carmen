@@ -116,6 +116,7 @@ const sharedAudioState: {
 
 const spriteCanvasCache = new Map<string, HTMLCanvasElement>();
 const COLLISION_CELL_SIZE = 96;
+const AUDIO_UNLOCK_EVENT = 'captain-carmen:unlock-audio';
 
 const rectsOverlap = (first: CollisionRect, second: CollisionRect) => {
   return first.x < second.x + second.width
@@ -236,6 +237,8 @@ export default function GameCanvas({
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioMasterGainRef = useRef<GainNode | null>(null);
   const noiseBufferRef = useRef<AudioBuffer | null>(null);
+  const audioResumePromiseRef = useRef<Promise<void> | null>(null);
+  const queuedSoundCuesRef = useRef<SoundCue[]>([]);
   const soundCooldownRef = useRef<Record<string, number>>({});
   const gameOverSequenceEndsAtRef = useRef(0);
   const finalExplosionRef = useRef<{ x: number; y: number; startedAt: number } | null>(null);
@@ -281,10 +284,6 @@ export default function GameCanvas({
       sharedAudioState.audioContext = audioContext;
       sharedAudioState.audioMasterGain = masterGain;
       sharedAudioState.noiseBuffer = noiseBufferRef.current;
-    }
-
-    if (audioContextRef.current.state === 'suspended') {
-      void audioContextRef.current.resume();
     }
 
     return audioContextRef.current;
@@ -375,6 +374,147 @@ export default function GameCanvas({
     noiseSource.stop(startAt + duration + 0.03);
   }, [createNoiseBuffer]);
 
+  const primeAudioOutput = useCallback((audioContext: AudioContext, masterGain: GainNode) => {
+    const buffer = audioContext.createBuffer(1, 1, audioContext.sampleRate);
+    const source = audioContext.createBufferSource();
+    const gain = audioContext.createGain();
+    const startAt = audioContext.currentTime;
+
+    source.buffer = buffer;
+    gain.gain.setValueAtTime(0.00001, startAt);
+
+    source.connect(gain);
+    gain.connect(masterGain);
+    source.start(startAt);
+    source.stop(startAt + 0.001);
+  }, []);
+
+  const playSoundNow = useCallback((audioContext: AudioContext, masterGain: GainNode, cue: SoundCue) => {
+    const now = audioContext.currentTime;
+
+    switch (cue) {
+      case 'blaster':
+        if (!shouldPlaySound(cue, 65)) return;
+        playTone(audioContext, masterGain, 1320, 0.04, { type: 'square', volume: 0.05, slideTo: 760, when: now });
+        playTone(audioContext, masterGain, 880, 0.028, { type: 'square', volume: 0.026, when: now + 0.008, slideTo: 660 });
+        break;
+      case 'laser':
+        if (!shouldPlaySound(cue, 70)) return;
+        playTone(audioContext, masterGain, 1680, 0.065, { type: 'square', volume: 0.045, slideTo: 1120, when: now });
+        playTone(audioContext, masterGain, 2240, 0.045, { type: 'triangle', volume: 0.024, when: now + 0.006, slideTo: 1760 });
+        break;
+      case 'bomb':
+        if (!shouldPlaySound(cue, 180)) return;
+        playTone(audioContext, masterGain, 210, 0.16, { type: 'square', volume: 0.06, slideTo: 72, when: now });
+        playTone(audioContext, masterGain, 96, 0.24, { type: 'triangle', volume: 0.05, slideTo: 40, when: now + 0.02 });
+        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.045, filterFrequency: 420, when: now + 0.025 });
+        break;
+      case 'enemyShot':
+        if (!shouldPlaySound(cue, 120)) return;
+        playTone(audioContext, masterGain, 520, 0.06, { type: 'square', volume: 0.032, slideTo: 280, when: now });
+        break;
+      case 'explosion':
+        if (!shouldPlaySound(cue, 90)) return;
+        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.085, filterFrequency: 980, when: now });
+        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.055, filterFrequency: 420, when: now + 0.018 });
+        playTone(audioContext, masterGain, 180, 0.16, { type: 'square', volume: 0.045, slideTo: 52, when: now });
+        playTone(audioContext, masterGain, 92, 0.22, { type: 'triangle', volume: 0.04, slideTo: 36, when: now + 0.01 });
+        break;
+      case 'pickup':
+        if (!shouldPlaySound(cue, 160)) return;
+        playTone(audioContext, masterGain, 660, 0.06, { type: 'square', volume: 0.04, when: now });
+        playTone(audioContext, masterGain, 990, 0.07, { type: 'square', volume: 0.038, when: now + 0.045 });
+        playTone(audioContext, masterGain, 1320, 0.09, { type: 'triangle', volume: 0.03, when: now + 0.09 });
+        break;
+      case 'playerExplosion':
+        if (!shouldPlaySound(cue, 250)) return;
+        playNoiseBurst(audioContext, masterGain, 0.16, { volume: 0.08, filterFrequency: 760, when: now });
+        playNoiseBurst(audioContext, masterGain, 0.28, { volume: 0.05, filterFrequency: 320, when: now + 0.02 });
+        playTone(audioContext, masterGain, 260, 0.22, { type: 'square', volume: 0.055, slideTo: 70, when: now });
+        playTone(audioContext, masterGain, 120, 0.3, { type: 'triangle', volume: 0.04, slideTo: 34, when: now + 0.015 });
+        break;
+      case 'gameOverExplosion':
+        if (!shouldPlaySound(cue, 900)) return;
+        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.12, filterFrequency: 880, when: now });
+        playNoiseBurst(audioContext, masterGain, 0.58, { volume: 0.08, filterFrequency: 260, when: now + 0.03 });
+        playTone(audioContext, masterGain, 190, 0.5, { type: 'square', volume: 0.085, slideTo: 34, when: now });
+        playTone(audioContext, masterGain, 96, 0.62, { type: 'triangle', volume: 0.06, slideTo: 24, when: now + 0.04 });
+        playTone(audioContext, masterGain, 420, 0.2, { type: 'square', volume: 0.03, slideTo: 120, when: now + 0.07 });
+        break;
+      case 'bossAlert':
+        if (!shouldPlaySound(cue, 2200)) return;
+        playTone(audioContext, masterGain, 220, 0.14, { type: 'square', volume: 0.04, when: now });
+        playTone(audioContext, masterGain, 247, 0.14, { type: 'square', volume: 0.04, when: now + 0.16 });
+        playTone(audioContext, masterGain, 294, 0.18, { type: 'square', volume: 0.045, when: now + 0.32 });
+        playTone(audioContext, masterGain, 147, 0.36, { type: 'triangle', volume: 0.03, when: now });
+        break;
+      case 'bossSpawn':
+        if (!shouldPlaySound(cue, 1200)) return;
+        playTone(audioContext, masterGain, 140, 0.22, { type: 'square', volume: 0.05, slideTo: 280, when: now });
+        playTone(audioContext, masterGain, 176, 0.22, { type: 'square', volume: 0.042, slideTo: 352, when: now + 0.08 });
+        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.035, filterFrequency: 1100, when: now + 0.12 });
+        break;
+      case 'bossDown':
+        if (!shouldPlaySound(cue, 1600)) return;
+        playTone(audioContext, masterGain, 784, 0.12, { type: 'square', volume: 0.05, when: now });
+        playTone(audioContext, masterGain, 523.25, 0.14, { type: 'square', volume: 0.05, when: now + 0.11 });
+        playTone(audioContext, masterGain, 392, 0.18, { type: 'triangle', volume: 0.05, when: now + 0.24 });
+        playNoiseBurst(audioContext, masterGain, 0.28, { volume: 0.065, filterFrequency: 780, when: now + 0.08 });
+        break;
+      case 'waveClear':
+        if (!shouldPlaySound(cue, 2200)) return;
+        playTone(audioContext, masterGain, 523.25, 0.1, { type: 'square', volume: 0.04, when: now });
+        playTone(audioContext, masterGain, 659.25, 0.1, { type: 'square', volume: 0.04, when: now + 0.1 });
+        playTone(audioContext, masterGain, 783.99, 0.12, { type: 'square', volume: 0.045, when: now + 0.2 });
+        playTone(audioContext, masterGain, 1046.5, 0.24, { type: 'triangle', volume: 0.035, when: now + 0.34, slideTo: 1318.51 });
+        break;
+      default:
+        break;
+    }
+  }, [playNoiseBurst, playTone, shouldPlaySound]);
+
+  const flushQueuedSounds = useCallback((audioContext: AudioContext, masterGain: GainNode) => {
+    if (queuedSoundCuesRef.current.length === 0) {
+      return;
+    }
+
+    const queuedCues = queuedSoundCuesRef.current.splice(0, queuedSoundCuesRef.current.length);
+    queuedCues.forEach((cue) => {
+      playSoundNow(audioContext, masterGain, cue);
+    });
+  }, [playSoundNow]);
+
+  const unlockAudio = useCallback(() => {
+    const audioContext = ensureAudioReady();
+    const masterGain = audioMasterGainRef.current;
+
+    if (!audioContext || !masterGain) {
+      return;
+    }
+
+    if (audioContext.state === 'running') {
+      primeAudioOutput(audioContext, masterGain);
+      flushQueuedSounds(audioContext, masterGain);
+      return;
+    }
+
+    if (!audioResumePromiseRef.current) {
+      audioResumePromiseRef.current = audioContext.resume()
+        .then(() => {
+          if (audioContext.state === 'running') {
+            primeAudioOutput(audioContext, masterGain);
+            flushQueuedSounds(audioContext, masterGain);
+          }
+        })
+        .catch(() => {
+          // Safari can reject resume attempts outside user activation; queued sounds remain until the next gesture.
+        })
+        .finally(() => {
+          audioResumePromiseRef.current = null;
+        });
+    }
+  }, [ensureAudioReady, flushQueuedSounds, primeAudioOutput]);
+
   const playSound = useCallback((cue: SoundCue) => {
     const audioContext = ensureAudioReady();
     const masterGain = audioMasterGainRef.current;
@@ -383,79 +523,16 @@ export default function GameCanvas({
       return;
     }
 
-    const now = audioContext.currentTime;
-
-    switch (cue) {
-      case 'blaster':
-        if (!shouldPlaySound(cue, 65)) return;
-        playTone(audioContext, masterGain, 980, 0.05, { type: 'square', volume: 0.04, slideTo: 720, when: now });
-        playTone(audioContext, masterGain, 1440, 0.03, { type: 'triangle', volume: 0.025, when: now + 0.01 });
-        break;
-      case 'laser':
-        if (!shouldPlaySound(cue, 70)) return;
-        playTone(audioContext, masterGain, 1240, 0.08, { type: 'sawtooth', volume: 0.05, slideTo: 920, when: now });
-        playTone(audioContext, masterGain, 1860, 0.06, { type: 'sine', volume: 0.028, when: now + 0.01, slideTo: 1480 });
-        break;
-      case 'bomb':
-        if (!shouldPlaySound(cue, 180)) return;
-        playTone(audioContext, masterGain, 220, 0.2, { type: 'sawtooth', volume: 0.06, slideTo: 90, when: now });
-        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.035, filterFrequency: 500, when: now + 0.03 });
-        break;
-      case 'enemyShot':
-        if (!shouldPlaySound(cue, 120)) return;
-        playTone(audioContext, masterGain, 430, 0.08, { type: 'square', volume: 0.03, slideTo: 240, when: now });
-        break;
-      case 'explosion':
-        if (!shouldPlaySound(cue, 90)) return;
-        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.07, filterFrequency: 760, when: now });
-        playTone(audioContext, masterGain, 160, 0.15, { type: 'triangle', volume: 0.025, slideTo: 60, when: now });
-        break;
-      case 'pickup':
-        if (!shouldPlaySound(cue, 160)) return;
-        playTone(audioContext, masterGain, 660, 0.08, { type: 'triangle', volume: 0.05, when: now });
-        playTone(audioContext, masterGain, 990, 0.1, { type: 'triangle', volume: 0.04, when: now + 0.06 });
-        break;
-      case 'playerExplosion':
-        if (!shouldPlaySound(cue, 250)) return;
-        playNoiseBurst(audioContext, masterGain, 0.18, { volume: 0.06, filterFrequency: 440, when: now });
-        playTone(audioContext, masterGain, 280, 0.2, { type: 'sawtooth', volume: 0.05, slideTo: 90, when: now });
-        break;
-      case 'gameOverExplosion':
-        if (!shouldPlaySound(cue, 900)) return;
-        playNoiseBurst(audioContext, masterGain, 0.5, { volume: 0.1, filterFrequency: 320, when: now });
-        playTone(audioContext, masterGain, 180, 0.46, { type: 'sawtooth', volume: 0.08, slideTo: 38, when: now });
-        playTone(audioContext, masterGain, 320, 0.38, { type: 'triangle', volume: 0.05, slideTo: 70, when: now + 0.08 });
-        break;
-      case 'bossAlert':
-        if (!shouldPlaySound(cue, 2200)) return;
-        playTone(audioContext, masterGain, 220, 0.16, { type: 'sawtooth', volume: 0.045, when: now });
-        playTone(audioContext, masterGain, 277, 0.16, { type: 'sawtooth', volume: 0.045, when: now + 0.2 });
-        playTone(audioContext, masterGain, 330, 0.22, { type: 'sawtooth', volume: 0.05, when: now + 0.4 });
-        break;
-      case 'bossSpawn':
-        if (!shouldPlaySound(cue, 1200)) return;
-        playTone(audioContext, masterGain, 180, 0.28, { type: 'sawtooth', volume: 0.05, slideTo: 420, when: now });
-        playNoiseBurst(audioContext, masterGain, 0.16, { volume: 0.03, filterFrequency: 1200, when: now + 0.1 });
-        break;
-      case 'bossDown':
-        if (!shouldPlaySound(cue, 1600)) return;
-        playTone(audioContext, masterGain, 520, 0.12, { type: 'triangle', volume: 0.05, when: now });
-        playTone(audioContext, masterGain, 390, 0.14, { type: 'triangle', volume: 0.05, when: now + 0.12 });
-        playTone(audioContext, masterGain, 260, 0.2, { type: 'triangle', volume: 0.06, when: now + 0.26 });
-        playNoiseBurst(audioContext, masterGain, 0.25, { volume: 0.06, filterFrequency: 950, when: now + 0.1 });
-        break;
-      case 'waveClear':
-        if (!shouldPlaySound(cue, 2200)) return;
-        playTone(audioContext, masterGain, 523.25, 0.12, { type: 'triangle', volume: 0.045, when: now });
-        playTone(audioContext, masterGain, 659.25, 0.12, { type: 'triangle', volume: 0.045, when: now + 0.11 });
-        playTone(audioContext, masterGain, 783.99, 0.14, { type: 'triangle', volume: 0.05, when: now + 0.22 });
-        playTone(audioContext, masterGain, 1046.5, 0.28, { type: 'sine', volume: 0.04, when: now + 0.38, slideTo: 1174.66 });
-        playTone(audioContext, masterGain, 1318.51, 0.24, { type: 'sine', volume: 0.03, when: now + 0.48 });
-        break;
-      default:
-        break;
+    if (audioContext.state !== 'running') {
+      if (queuedSoundCuesRef.current.length < 12) {
+        queuedSoundCuesRef.current.push(cue);
+      }
+      unlockAudio();
+      return;
     }
-  }, [ensureAudioReady, playNoiseBurst, playTone, shouldPlaySound]);
+
+    playSoundNow(audioContext, masterGain, cue);
+  }, [ensureAudioReady, playSoundNow, unlockAudio]);
 
   const syncBombHud = useCallback((bombStock: number) => {
     const bombs = Math.floor(bombStock);
@@ -2430,20 +2507,18 @@ export default function GameCanvas({
   }, [gameState, playSound]);
 
   useEffect(() => {
-    const unlockAudio = () => {
-      ensureAudioReady();
-    };
-
     window.addEventListener('pointerdown', unlockAudio, { capture: true });
     window.addEventListener('touchstart', unlockAudio, { capture: true, passive: true });
     window.addEventListener('mousedown', unlockAudio, { capture: true });
+    window.addEventListener(AUDIO_UNLOCK_EVENT, unlockAudio);
 
     return () => {
       window.removeEventListener('pointerdown', unlockAudio, true);
       window.removeEventListener('touchstart', unlockAudio, true);
       window.removeEventListener('mousedown', unlockAudio, true);
+      window.removeEventListener(AUDIO_UNLOCK_EVENT, unlockAudio);
     };
-  }, [ensureAudioReady]);
+  }, [unlockAudio]);
 
   useEffect(() => {
     return () => {
@@ -2520,7 +2595,7 @@ export default function GameCanvas({
       if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
         e.preventDefault();
       }
-      ensureAudioReady();
+      unlockAudio();
       keysRef.current[e.code] = true;
       if (gameState === 'START' && e.code === 'Space') {
         onGameStart();
@@ -2534,7 +2609,7 @@ export default function GameCanvas({
 
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault();
-      ensureAudioReady();
+      unlockAudio();
       if (gameState !== 'PLAYING' && gameState !== 'LEVEL_UP') {
         if (gameState === 'START') onGameStart();
         if (gameState === 'GAME_OVER') onRestart();
@@ -2589,7 +2664,7 @@ export default function GameCanvas({
       }
       cancelAnimationFrame(requestRef.current);
     };
-  }, [ensureAudioReady, update, gameState, onGameStart, onRestart, shootBlaster, dropBomb]);
+  }, [unlockAudio, update, gameState, onGameStart, onRestart, shootBlaster, dropBomb]);
 
   return (
     <div className="relative w-full h-full bg-black touch-none flex items-center justify-center">

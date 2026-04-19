@@ -7,7 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Heart, Stars, Trophy, Play, RotateCcw } from 'lucide-react';
 import { GameState } from '../types';
-import captainCarmenPortrait from '../assets/captain-carmen-portrait.svg';
+import captainCarmenPortrait from '../../pixel_portrait_8bit.svg';
 
 const STAGE_PRESENTATION = [
   {

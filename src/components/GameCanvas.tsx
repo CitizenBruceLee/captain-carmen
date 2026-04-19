@@ -500,8 +500,6 @@ export default function GameCanvas({
   const touchState = useRef({
     moveTouchId: null as number | null,
     moveLastX: 0,
-    moveLastMotionAt: 0,
-    moveDirection: 0,
     fireActive: false,
     bombPressed: false,
     lastFireTime: 0,
@@ -1226,14 +1224,6 @@ export default function GameCanvas({
     // Update bomb reticle (fixed distance ahead of player)
     p.bombX = p.x + p.width / 2;
     p.bombY = p.y - BOMB_DISTANCE;
-    
-    if (touchState.current.moveTouchId !== null && time - touchState.current.moveLastMotionAt > 90) {
-      touchState.current.moveDirection = 0;
-    }
-
-    // Touch Movement (drag left/right in bottom-left zone)
-    if (touchState.current.moveDirection < 0) p.x -= PLAYER_SPEED;
-    if (touchState.current.moveDirection > 0) p.x += PLAYER_SPEED;
     
     // Clamp player
     p.x = Math.max(0, Math.min(GAME_WIDTH - p.width, p.x));
@@ -2185,12 +2175,11 @@ export default function GameCanvas({
       const zoneTop = GAME_HEIGHT * 0.6;
       const moveZoneEnd = GAME_WIDTH * 0.5;
       const bombSplit = GAME_WIDTH * 0.75;
-      const moveThreshold = 6;
+      const moveThreshold = 3;
+      const dragScale = 1.35;
 
       let nextMoveTouchId: number | null = null;
       let nextMoveX = touchState.current.moveLastX;
-      let moveDirection = 0;
-      let moveDetectedAt = touchState.current.moveLastMotionAt;
       let fireActive = false;
       let bombPressed = false;
 
@@ -2206,15 +2195,16 @@ export default function GameCanvas({
         if (x < moveZoneEnd) {
           if (nextMoveTouchId === null) {
             nextMoveTouchId = touch.identifier;
-            nextMoveX = x;
 
             if (touchState.current.moveTouchId === touch.identifier) {
               const deltaX = x - touchState.current.moveLastX;
               if (Math.abs(deltaX) >= moveThreshold) {
-                moveDirection = deltaX < 0 ? -1 : 1;
-                moveDetectedAt = performance.now();
+                const player = playerRef.current;
+                player.x = Math.max(0, Math.min(GAME_WIDTH - player.width, player.x + deltaX * dragScale));
               }
             }
+
+            nextMoveX = x;
           }
         } else if (x < bombSplit) {
           bombPressed = true;
@@ -2234,14 +2224,11 @@ export default function GameCanvas({
 
       touchState.current.moveTouchId = nextMoveTouchId;
       touchState.current.moveLastX = nextMoveX;
-      touchState.current.moveLastMotionAt = nextMoveTouchId === null ? 0 : moveDetectedAt;
-      touchState.current.moveDirection = moveDirection;
       touchState.current.fireActive = fireActive;
       touchState.current.bombPressed = bombPressed;
 
       if (nextMoveTouchId === null) {
         touchState.current.moveLastX = 0;
-        touchState.current.moveLastMotionAt = 0;
       }
 
       if (!fireActive) {
@@ -2339,10 +2326,10 @@ export default function GameCanvas({
           <div className="absolute bottom-4 left-4 w-[calc(50%-1.5rem)] h-40 border-2 border-white/5 bg-white/5 rounded-2xl opacity-30 overflow-hidden">
             <div className="grid h-full grid-cols-2">
               <div className="flex items-center justify-center border-r border-white/10">
-                <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Left</span>
+                <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Drag</span>
               </div>
               <div className="flex items-center justify-center">
-                <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Right</span>
+                <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Steer</span>
               </div>
             </div>
           </div>

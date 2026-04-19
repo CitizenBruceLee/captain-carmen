@@ -499,7 +499,6 @@ export default function GameCanvas({
   // Touch Handling State
   const touchState = useRef({
     moveTouchId: null as number | null,
-    moveLastX: 0,
     moveTargetX: 0,
     fireActive: false,
     bombPressed: false,
@@ -1229,7 +1228,7 @@ export default function GameCanvas({
     if (touchState.current.moveTouchId !== null) {
       const deltaToTarget = touchState.current.moveTargetX - p.x;
       if (Math.abs(deltaToTarget) > 0.5) {
-        p.x += deltaToTarget * 0.35;
+        p.x += deltaToTarget * 0.45;
       } else {
         p.x = touchState.current.moveTargetX;
       }
@@ -2180,11 +2179,8 @@ export default function GameCanvas({
       const zoneTop = GAME_HEIGHT * 0.6;
       const moveZoneEnd = GAME_WIDTH * 0.5;
       const bombSplit = GAME_WIDTH * 0.75;
-      const moveThreshold = 2;
-      const dragScale = 1.1;
 
       let nextMoveTouchId: number | null = null;
-      let nextMoveX = touchState.current.moveLastX;
       let nextMoveTargetX = touchState.current.moveTargetX;
       let fireActive = false;
       let bombPressed = false;
@@ -2201,21 +2197,9 @@ export default function GameCanvas({
         if (x < moveZoneEnd) {
           if (nextMoveTouchId === null) {
             nextMoveTouchId = touch.identifier;
-
-            if (touchState.current.moveTouchId === touch.identifier) {
-              const deltaX = x - touchState.current.moveLastX;
-              if (Math.abs(deltaX) >= moveThreshold) {
-                const player = playerRef.current;
-                nextMoveTargetX = Math.max(
-                  0,
-                  Math.min(GAME_WIDTH - player.width, touchState.current.moveTargetX + deltaX * dragScale)
-                );
-              }
-            } else {
-              nextMoveTargetX = playerRef.current.x;
-            }
-
-            nextMoveX = x;
+            const player = playerRef.current;
+            const normalizedX = Math.max(0, Math.min(1, x / moveZoneEnd));
+            nextMoveTargetX = normalizedX * (GAME_WIDTH - player.width);
           }
         } else if (x < bombSplit) {
           bombPressed = true;
@@ -2234,13 +2218,11 @@ export default function GameCanvas({
       }
 
       touchState.current.moveTouchId = nextMoveTouchId;
-      touchState.current.moveLastX = nextMoveX;
       touchState.current.moveTargetX = nextMoveTargetX;
       touchState.current.fireActive = fireActive;
       touchState.current.bombPressed = bombPressed;
 
       if (nextMoveTouchId === null) {
-        touchState.current.moveLastX = 0;
         touchState.current.moveTargetX = playerRef.current.x;
       }
 

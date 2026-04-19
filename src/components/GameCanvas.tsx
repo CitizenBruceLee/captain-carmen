@@ -326,6 +326,7 @@ export default function GameCanvas({
     frequency: number,
     duration: number,
     options: {
+      profile?: 'clean' | 'arcade' | 'metallic' | 'impact' | 'alert';
       type?: OscillatorType;
       volume?: number;
       when?: number;
@@ -335,31 +336,82 @@ export default function GameCanvas({
   ) => {
     const oscillator = audioContext.createOscillator();
     const bodyOscillator = audioContext.createOscillator();
+    const metallicOscillator = audioContext.createOscillator();
     const bodyFilter = audioContext.createBiquadFilter();
+    const metallicFilter = audioContext.createBiquadFilter();
     const gain = audioContext.createGain();
     const bodyGain = audioContext.createGain();
+    const metallicGain = audioContext.createGain();
     const startAt = options.when ?? audioContext.currentTime;
+    const profile = options.profile ?? 'arcade';
     const mainVolume = options.volume ?? 0.06;
     const bodyFrequency = Math.max(frequency * 0.5, 28);
+    const metallicRatio = profile === 'clean'
+      ? 1.55
+      : profile === 'metallic'
+        ? 2.95
+        : profile === 'impact'
+          ? 2.25
+          : profile === 'alert'
+            ? 2.7
+            : 2.2;
+    const metallicFrequency = Math.max(frequency * metallicRatio, 120);
     const bodyType: OscillatorType = options.type === 'triangle' ? 'sine' : 'triangle';
-    const bodyVolume = mainVolume * (options.type === 'triangle' ? 0.24 : 0.38);
+    const bodyVolume = mainVolume * (
+      profile === 'clean'
+        ? 0.18
+        : profile === 'metallic'
+          ? 0.16
+          : profile === 'impact'
+            ? 0.44
+            : profile === 'alert'
+              ? 0.12
+              : options.type === 'triangle'
+                ? 0.24
+                : 0.38
+    );
+    const metallicType: OscillatorType = profile === 'clean'
+      ? 'triangle'
+      : options.type === 'triangle'
+        ? 'square'
+        : 'sawtooth';
+    const metallicVolume = mainVolume * (
+      profile === 'clean'
+        ? 0.04
+        : profile === 'metallic'
+          ? 0.36
+          : profile === 'impact'
+            ? 0.16
+            : profile === 'alert'
+              ? 0.28
+              : options.type === 'triangle'
+                ? 0.12
+                : 0.22
+    );
 
     oscillator.type = options.type ?? 'triangle';
     oscillator.frequency.setValueAtTime(frequency, startAt);
     bodyOscillator.type = bodyType;
     bodyOscillator.frequency.setValueAtTime(bodyFrequency, startAt);
+    metallicOscillator.type = metallicType;
+    metallicOscillator.frequency.setValueAtTime(metallicFrequency, startAt);
     bodyFilter.type = 'lowpass';
-    bodyFilter.frequency.setValueAtTime(Math.max(bodyFrequency * 5, 180), startAt);
+    bodyFilter.frequency.setValueAtTime(Math.max(bodyFrequency * (profile === 'impact' ? 4.2 : 5), 180), startAt);
     bodyFilter.Q.value = 0.4;
+    metallicFilter.type = 'bandpass';
+    metallicFilter.frequency.setValueAtTime(Math.max(frequency * (profile === 'metallic' ? 4.4 : profile === 'alert' ? 4 : 3.2), 900), startAt);
+    metallicFilter.Q.value = profile === 'metallic' ? 6.5 : profile === 'alert' ? 5.2 : 3.6;
 
     if (options.slideTo !== undefined) {
       oscillator.frequency.exponentialRampToValueAtTime(Math.max(options.slideTo, 1), startAt + duration);
       bodyOscillator.frequency.exponentialRampToValueAtTime(Math.max(options.slideTo * 0.5, 1), startAt + duration);
+      metallicOscillator.frequency.exponentialRampToValueAtTime(Math.max(options.slideTo * (profile === 'metallic' ? 2.8 : 2.1), 1), startAt + duration * 0.7);
     }
 
     if (options.detune !== undefined) {
       oscillator.detune.setValueAtTime(options.detune, startAt);
       bodyOscillator.detune.setValueAtTime(options.detune * 0.35, startAt);
+      metallicOscillator.detune.setValueAtTime(options.detune * 1.7, startAt);
     }
 
     gain.gain.setValueAtTime(0.0001, startAt);
@@ -368,16 +420,24 @@ export default function GameCanvas({
     bodyGain.gain.setValueAtTime(0.0001, startAt);
     bodyGain.gain.exponentialRampToValueAtTime(bodyVolume, startAt + 0.014);
     bodyGain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+    metallicGain.gain.setValueAtTime(0.0001, startAt);
+    metallicGain.gain.exponentialRampToValueAtTime(metallicVolume, startAt + 0.004);
+    metallicGain.gain.exponentialRampToValueAtTime(0.0001, startAt + Math.max(duration * 0.58, 0.02));
 
     oscillator.connect(gain);
     bodyOscillator.connect(bodyFilter);
     bodyFilter.connect(bodyGain);
+    metallicOscillator.connect(metallicFilter);
+    metallicFilter.connect(metallicGain);
     gain.connect(masterGain);
     bodyGain.connect(masterGain);
+    metallicGain.connect(masterGain);
     oscillator.start(startAt);
     bodyOscillator.start(startAt);
+    metallicOscillator.start(startAt);
     oscillator.stop(startAt + duration + 0.03);
     bodyOscillator.stop(startAt + duration + 0.03);
+    metallicOscillator.stop(startAt + duration + 0.03);
   }, []);
 
   const playNoiseBurst = useCallback((
@@ -415,6 +475,45 @@ export default function GameCanvas({
     noiseSource.stop(startAt + duration + 0.03);
   }, [createNoiseBuffer]);
 
+  const playExplosionReverb = useCallback((
+    audioContext: AudioContext,
+    masterGain: GainNode,
+    startAt: number,
+    options: {
+      toneFrequency: number;
+      toneSlideTo: number;
+      noiseFrequency: number;
+      toneVolume?: number;
+      noiseVolume?: number;
+    }
+  ) => {
+    const toneVolume = options.toneVolume ?? 0.018;
+    const noiseVolume = options.noiseVolume ?? 0.028;
+
+    playNoiseBurst(audioContext, masterGain, 0.12, {
+      volume: noiseVolume,
+      filterFrequency: options.noiseFrequency,
+      when: startAt + 0.09,
+    });
+    playTone(audioContext, masterGain, options.toneFrequency, 0.14, {
+      type: 'triangle',
+      volume: toneVolume,
+      slideTo: options.toneSlideTo,
+      when: startAt + 0.11,
+    });
+    playNoiseBurst(audioContext, masterGain, 0.18, {
+      volume: noiseVolume * 0.72,
+      filterFrequency: Math.max(options.noiseFrequency * 0.72, 140),
+      when: startAt + 0.17,
+    });
+    playTone(audioContext, masterGain, options.toneFrequency * 0.7, 0.2, {
+      type: 'triangle',
+      volume: toneVolume * 0.85,
+      slideTo: Math.max(options.toneSlideTo * 0.65, 18),
+      when: startAt + 0.19,
+    });
+  }, [playNoiseBurst, playTone]);
+
   const primeAudioOutput = useCallback((audioContext: AudioContext, masterGain: GainNode) => {
     const buffer = audioContext.createBuffer(1, 1, audioContext.sampleRate);
     const source = audioContext.createBufferSource();
@@ -436,92 +535,97 @@ export default function GameCanvas({
     switch (cue) {
       case 'blaster':
         if (!shouldPlaySound(cue, 65)) return;
-        playTone(audioContext, masterGain, 1480, 0.024, { type: 'square', volume: 0.04, slideTo: 1120, when: now });
-        playTone(audioContext, masterGain, 1180, 0.02, { type: 'square', volume: 0.025, slideTo: 900, when: now + 0.012 });
+        playTone(audioContext, masterGain, 1620, 0.018, { profile: 'arcade', type: 'square', volume: 0.038, slideTo: 1260, when: now, detune: -8 });
+        playTone(audioContext, masterGain, 1180, 0.014, { profile: 'metallic', type: 'sawtooth', volume: 0.018, slideTo: 860, when: now + 0.01, detune: 12 });
         break;
       case 'laser':
         if (!shouldPlaySound(cue, 70)) return;
-        playTone(audioContext, masterGain, 1760, 0.028, { type: 'square', volume: 0.038, slideTo: 1360, when: now });
-        playTone(audioContext, masterGain, 1320, 0.026, { type: 'square', volume: 0.03, slideTo: 980, when: now + 0.018 });
-        playTone(audioContext, masterGain, 1980, 0.03, { type: 'triangle', volume: 0.018, slideTo: 1580, when: now + 0.034 });
+        playTone(audioContext, masterGain, 1880, 0.02, { profile: 'metallic', type: 'sawtooth', volume: 0.03, slideTo: 1520, when: now, detune: -10 });
+        playTone(audioContext, masterGain, 1540, 0.018, { profile: 'metallic', type: 'square', volume: 0.024, slideTo: 1180, when: now + 0.014, detune: 9 });
+        playTone(audioContext, masterGain, 1220, 0.02, { profile: 'arcade', type: 'square', volume: 0.02, slideTo: 880, when: now + 0.03 });
         break;
       case 'bomb':
         if (!shouldPlaySound(cue, 180)) return;
-        playTone(audioContext, masterGain, 260, 0.055, { type: 'square', volume: 0.05, slideTo: 180, when: now });
-        playTone(audioContext, masterGain, 180, 0.06, { type: 'square', volume: 0.048, slideTo: 124, when: now + 0.05 });
-        playTone(audioContext, masterGain, 124, 0.085, { type: 'square', volume: 0.052, slideTo: 64, when: now + 0.1 });
-        playNoiseBurst(audioContext, masterGain, 0.11, { volume: 0.04, filterFrequency: 360, when: now + 0.12 });
+        playTone(audioContext, masterGain, 280, 0.045, { profile: 'impact', type: 'square', volume: 0.046, slideTo: 220, when: now });
+        playTone(audioContext, masterGain, 210, 0.045, { profile: 'impact', type: 'square', volume: 0.044, slideTo: 154, when: now + 0.04 });
+        playTone(audioContext, masterGain, 154, 0.055, { profile: 'impact', type: 'square', volume: 0.044, slideTo: 96, when: now + 0.082 });
+        playTone(audioContext, masterGain, 104, 0.075, { profile: 'impact', type: 'sawtooth', volume: 0.03, slideTo: 56, when: now + 0.125 });
+        playNoiseBurst(audioContext, masterGain, 0.08, { volume: 0.032, filterFrequency: 420, when: now + 0.115 });
         break;
       case 'enemyShot':
         if (!shouldPlaySound(cue, 120)) return;
-        playTone(audioContext, masterGain, 760, 0.026, { type: 'square', volume: 0.024, slideTo: 520, when: now });
-        playTone(audioContext, masterGain, 610, 0.022, { type: 'square', volume: 0.018, slideTo: 420, when: now + 0.01 });
+        playTone(audioContext, masterGain, 820, 0.018, { profile: 'metallic', type: 'sawtooth', volume: 0.02, slideTo: 620, when: now, detune: 8 });
+        playTone(audioContext, masterGain, 640, 0.014, { profile: 'arcade', type: 'square', volume: 0.014, slideTo: 500, when: now + 0.009 });
         break;
       case 'explosion':
         if (!shouldPlaySound(cue, 90)) return;
-        playNoiseBurst(audioContext, masterGain, 0.085, { volume: 0.07, filterFrequency: 1200, when: now });
-        playTone(audioContext, masterGain, 220, 0.06, { type: 'square', volume: 0.038, slideTo: 130, when: now });
-        playTone(audioContext, masterGain, 146, 0.08, { type: 'square', volume: 0.036, slideTo: 82, when: now + 0.022 });
-        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.05, filterFrequency: 420, when: now + 0.03 });
-        playTone(audioContext, masterGain, 84, 0.11, { type: 'triangle', volume: 0.03, slideTo: 42, when: now + 0.05 });
+        playNoiseBurst(audioContext, masterGain, 0.06, { volume: 0.075, filterFrequency: 1500, when: now });
+        playTone(audioContext, masterGain, 240, 0.045, { profile: 'impact', type: 'square', volume: 0.036, slideTo: 158, when: now, detune: -9 });
+        playTone(audioContext, masterGain, 176, 0.05, { profile: 'impact', type: 'sawtooth', volume: 0.026, slideTo: 104, when: now + 0.018, detune: 11 });
+        playNoiseBurst(audioContext, masterGain, 0.09, { volume: 0.048, filterFrequency: 520, when: now + 0.028 });
+        playTone(audioContext, masterGain, 112, 0.08, { profile: 'impact', type: 'square', volume: 0.024, slideTo: 62, when: now + 0.042 });
+        playExplosionReverb(audioContext, masterGain, now, { toneFrequency: 84, toneSlideTo: 38, noiseFrequency: 300, toneVolume: 0.016, noiseVolume: 0.024 });
         break;
       case 'pickup':
         if (!shouldPlaySound(cue, 160)) return;
-        playTone(audioContext, masterGain, 523.25, 0.04, { type: 'square', volume: 0.028, when: now });
-        playTone(audioContext, masterGain, 659.25, 0.04, { type: 'square', volume: 0.03, when: now + 0.035 });
-        playTone(audioContext, masterGain, 783.99, 0.05, { type: 'square', volume: 0.03, when: now + 0.07 });
-        playTone(audioContext, masterGain, 1046.5, 0.08, { type: 'triangle', volume: 0.026, when: now + 0.11 });
+        playTone(audioContext, masterGain, 523.25, 0.028, { profile: 'clean', type: 'square', volume: 0.024, when: now });
+        playTone(audioContext, masterGain, 659.25, 0.028, { profile: 'clean', type: 'square', volume: 0.026, when: now + 0.03 });
+        playTone(audioContext, masterGain, 880, 0.032, { profile: 'clean', type: 'square', volume: 0.024, when: now + 0.058 });
+        playTone(audioContext, masterGain, 1174.66, 0.05, { profile: 'clean', type: 'triangle', volume: 0.018, when: now + 0.09 });
         break;
       case 'playerExplosion':
         if (!shouldPlaySound(cue, 250)) return;
-        playNoiseBurst(audioContext, masterGain, 0.11, { volume: 0.085, filterFrequency: 760, when: now });
-        playTone(audioContext, masterGain, 240, 0.08, { type: 'square', volume: 0.05, slideTo: 150, when: now, detune: -12 });
-        playTone(audioContext, masterGain, 174, 0.11, { type: 'square', volume: 0.044, slideTo: 96, when: now + 0.03, detune: 14 });
-        playNoiseBurst(audioContext, masterGain, 0.18, { volume: 0.06, filterFrequency: 300, when: now + 0.055 });
-        playTone(audioContext, masterGain, 96, 0.24, { type: 'triangle', volume: 0.038, slideTo: 28, when: now + 0.075 });
+        playNoiseBurst(audioContext, masterGain, 0.075, { volume: 0.09, filterFrequency: 920, when: now });
+        playTone(audioContext, masterGain, 260, 0.06, { profile: 'impact', type: 'square', volume: 0.05, slideTo: 176, when: now, detune: -18 });
+        playTone(audioContext, masterGain, 188, 0.075, { profile: 'impact', type: 'sawtooth', volume: 0.03, slideTo: 118, when: now + 0.02, detune: 20 });
+        playNoiseBurst(audioContext, masterGain, 0.12, { volume: 0.058, filterFrequency: 380, when: now + 0.04 });
+        playTone(audioContext, masterGain, 120, 0.12, { profile: 'impact', type: 'square', volume: 0.03, slideTo: 52, when: now + 0.055 });
+        playExplosionReverb(audioContext, masterGain, now, { toneFrequency: 92, toneSlideTo: 24, noiseFrequency: 240, toneVolume: 0.022, noiseVolume: 0.03 });
         break;
       case 'gameOverExplosion':
         if (!shouldPlaySound(cue, 900)) return;
-        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.095, filterFrequency: 960, when: now });
-        playTone(audioContext, masterGain, 220, 0.12, { type: 'square', volume: 0.06, slideTo: 132, when: now });
-        playTone(audioContext, masterGain, 164, 0.16, { type: 'square', volume: 0.05, slideTo: 88, when: now + 0.05 });
-        playNoiseBurst(audioContext, masterGain, 0.22, { volume: 0.07, filterFrequency: 320, when: now + 0.08 });
-        playTone(audioContext, masterGain, 92, 0.34, { type: 'triangle', volume: 0.046, slideTo: 22, when: now + 0.12 });
+        playNoiseBurst(audioContext, masterGain, 0.1, { volume: 0.1, filterFrequency: 1100, when: now });
+        playTone(audioContext, masterGain, 240, 0.085, { profile: 'impact', type: 'square', volume: 0.06, slideTo: 160, when: now, detune: -12 });
+        playTone(audioContext, masterGain, 176, 0.11, { profile: 'impact', type: 'sawtooth', volume: 0.034, slideTo: 104, when: now + 0.035, detune: 15 });
+        playNoiseBurst(audioContext, masterGain, 0.16, { volume: 0.074, filterFrequency: 360, when: now + 0.07 });
+        playTone(audioContext, masterGain, 104, 0.2, { profile: 'impact', type: 'square', volume: 0.04, slideTo: 34, when: now + 0.1 });
+        playExplosionReverb(audioContext, masterGain, now, { toneFrequency: 82, toneSlideTo: 18, noiseFrequency: 210, toneVolume: 0.026, noiseVolume: 0.034 });
         break;
       case 'bossAlert':
         if (!shouldPlaySound(cue, 2200)) return;
-        playTone(audioContext, masterGain, 196, 0.08, { type: 'square', volume: 0.032, when: now });
-        playTone(audioContext, masterGain, 196, 0.08, { type: 'square', volume: 0.032, when: now + 0.14 });
-        playTone(audioContext, masterGain, 247, 0.12, { type: 'square', volume: 0.036, when: now + 0.3 });
-        playTone(audioContext, masterGain, 123.47, 0.34, { type: 'triangle', volume: 0.026, when: now });
+        playTone(audioContext, masterGain, 196, 0.06, { profile: 'alert', type: 'square', volume: 0.03, when: now });
+        playTone(audioContext, masterGain, 196, 0.06, { profile: 'alert', type: 'square', volume: 0.03, when: now + 0.11 });
+        playTone(audioContext, masterGain, 220, 0.06, { profile: 'alert', type: 'square', volume: 0.03, when: now + 0.22 });
+        playTone(audioContext, masterGain, 220, 0.08, { profile: 'alert', type: 'sawtooth', volume: 0.02, when: now + 0.34 });
         break;
       case 'bossSpawn':
         if (!shouldPlaySound(cue, 1200)) return;
-        playTone(audioContext, masterGain, 110, 0.14, { type: 'square', volume: 0.042, slideTo: 164, when: now });
-        playTone(audioContext, masterGain, 146.83, 0.14, { type: 'square', volume: 0.04, slideTo: 220, when: now + 0.1 });
-        playTone(audioContext, masterGain, 196, 0.18, { type: 'square', volume: 0.042, slideTo: 294, when: now + 0.22 });
-        playNoiseBurst(audioContext, masterGain, 0.08, { volume: 0.03, filterFrequency: 900, when: now + 0.2 });
+        playTone(audioContext, masterGain, 104, 0.09, { profile: 'alert', type: 'square', volume: 0.038, slideTo: 132, when: now });
+        playTone(audioContext, masterGain, 132, 0.09, { profile: 'alert', type: 'square', volume: 0.036, slideTo: 176, when: now + 0.07 });
+        playTone(audioContext, masterGain, 176, 0.11, { profile: 'alert', type: 'sawtooth', volume: 0.026, slideTo: 240, when: now + 0.14 });
+        playNoiseBurst(audioContext, masterGain, 0.06, { volume: 0.028, filterFrequency: 1000, when: now + 0.18 });
         break;
       case 'bossDown':
         if (!shouldPlaySound(cue, 1600)) return;
-        playNoiseBurst(audioContext, masterGain, 0.11, { volume: 0.09, filterFrequency: 760, when: now });
-        playTone(audioContext, masterGain, 196, 0.1, { type: 'square', volume: 0.06, slideTo: 128, when: now });
-        playTone(audioContext, masterGain, 130.81, 0.14, { type: 'square', volume: 0.058, slideTo: 82.41, when: now + 0.08 });
-        playNoiseBurst(audioContext, masterGain, 0.18, { volume: 0.07, filterFrequency: 300, when: now + 0.14 });
-        playTone(audioContext, masterGain, 82.41, 0.28, { type: 'triangle', volume: 0.05, slideTo: 24, when: now + 0.18 });
+        playNoiseBurst(audioContext, masterGain, 0.08, { volume: 0.092, filterFrequency: 980, when: now });
+        playTone(audioContext, masterGain, 220, 0.075, { profile: 'impact', type: 'square', volume: 0.058, slideTo: 156, when: now, detune: -10 });
+        playTone(audioContext, masterGain, 164, 0.1, { profile: 'impact', type: 'sawtooth', volume: 0.032, slideTo: 104, when: now + 0.05, detune: 11 });
+        playNoiseBurst(audioContext, masterGain, 0.14, { volume: 0.07, filterFrequency: 340, when: now + 0.08 });
+        playTone(audioContext, masterGain, 110, 0.16, { profile: 'impact', type: 'square', volume: 0.036, slideTo: 40, when: now + 0.11 });
+        playExplosionReverb(audioContext, masterGain, now, { toneFrequency: 76, toneSlideTo: 20, noiseFrequency: 230, toneVolume: 0.024, noiseVolume: 0.032 });
         break;
       case 'waveClear':
         if (!shouldPlaySound(cue, 2200)) return;
-        playTone(audioContext, masterGain, 523.25, 0.05, { type: 'square', volume: 0.03, when: now });
-        playTone(audioContext, masterGain, 659.25, 0.05, { type: 'square', volume: 0.03, when: now + 0.045 });
-        playTone(audioContext, masterGain, 783.99, 0.06, { type: 'square', volume: 0.032, when: now + 0.09 });
-        playTone(audioContext, masterGain, 1046.5, 0.09, { type: 'square', volume: 0.034, when: now + 0.145 });
-        playTone(audioContext, masterGain, 1318.51, 0.16, { type: 'triangle', volume: 0.03, when: now + 0.22 });
+        playTone(audioContext, masterGain, 523.25, 0.038, { profile: 'clean', type: 'square', volume: 0.026, when: now });
+        playTone(audioContext, masterGain, 659.25, 0.038, { profile: 'clean', type: 'square', volume: 0.026, when: now + 0.04 });
+        playTone(audioContext, masterGain, 783.99, 0.042, { profile: 'clean', type: 'square', volume: 0.028, when: now + 0.08 });
+        playTone(audioContext, masterGain, 1046.5, 0.055, { profile: 'clean', type: 'square', volume: 0.028, when: now + 0.125 });
+        playTone(audioContext, masterGain, 1318.51, 0.085, { profile: 'clean', type: 'triangle', volume: 0.018, when: now + 0.18 });
         break;
       default:
         break;
     }
-  }, [playNoiseBurst, playTone, shouldPlaySound]);
+  }, [playExplosionReverb, playNoiseBurst, playTone, shouldPlaySound]);
 
   const flushQueuedSounds = useCallback((audioContext: AudioContext, masterGain: GainNode) => {
     if (queuedSoundCuesRef.current.length === 0) {
@@ -1989,6 +2093,62 @@ export default function GameCanvas({
     });
 
     const p = playerRef.current;
+    const drawPlayer = () => {
+      if (playerDestroyed) {
+        return;
+      }
+
+      ctx.save();
+
+      if (p.invisibleTimer > 0) {
+        ctx.globalAlpha = 0.3 + Math.sin(frameCount.current * 0.2) * 0.2;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.setLineDash([5, 5]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 0.8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (!minimalEffects) {
+        const auraGradient = ctx.createRadialGradient(
+          p.x + p.width / 2, p.y + p.height / 2, 0,
+          p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5
+        );
+        COLORS.PRIDE_RAINBOW.forEach((color, i) => {
+          auraGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color + '22');
+        });
+        ctx.fillStyle = auraGradient;
+        ctx.beginPath();
+        ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      drawArcadeSprite(
+        ctx,
+        SPRITES.PLAYER,
+        p.x,
+        p.y,
+        p.width,
+        p.height,
+        {
+          primary: '#FFFFFF',
+          secondary: COLORS.NEON.PINK,
+          highlight: COLORS.NEON.CYAN,
+          shadow: 'rgba(8, 3, 16, 0.82)',
+        }
+      );
+
+      const engineGradient = ctx.createLinearGradient(p.x, p.y + p.height, p.x, p.y + p.height + 15);
+      engineGradient.addColorStop(0, COLORS.NEON.PINK);
+      engineGradient.addColorStop(1, 'transparent');
+      ctx.fillStyle = engineGradient;
+      ctx.globalAlpha = (p.invisibleTimer > 0 ? 0.2 : 0.6) + Math.sin(frameCount.current * 0.3) * 0.2;
+      ctx.fillRect(p.x + p.width / 2 - 4, p.y + p.height - 2, 8, 15);
+      ctx.globalAlpha = 1.0;
+      ctx.restore();
+    };
 
     // Boss Health Bar
     const boss = enemiesRef.current.find(e => e.type === 'BOSS');
@@ -2045,61 +2205,6 @@ export default function GameCanvas({
       ctx.moveTo(p.bombX, p.bombY - s);
       ctx.lineTo(p.bombX, p.bombY + s);
       ctx.stroke();
-      ctx.restore();
-    }
-
-    if (!playerDestroyed) {
-      // Draw Player
-      ctx.save();
-      
-      // Startup Invisibility Effect
-      if (p.invisibleTimer > 0) {
-        ctx.globalAlpha = 0.3 + Math.sin(frameCount.current * 0.2) * 0.2;
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.setLineDash([5, 5]);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 0.8, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      if (!minimalEffects) {
-        const auraGradient = ctx.createRadialGradient(
-          p.x + p.width / 2, p.y + p.height / 2, 0,
-          p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5
-        );
-        COLORS.PRIDE_RAINBOW.forEach((color, i) => {
-          auraGradient.addColorStop(i / (COLORS.PRIDE_RAINBOW.length - 1), color + '22');
-        });
-        ctx.fillStyle = auraGradient;
-        ctx.beginPath();
-        ctx.arc(p.x + p.width / 2, p.y + p.height / 2, p.width * 1.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      drawArcadeSprite(
-        ctx,
-        SPRITES.PLAYER,
-        p.x,
-        p.y,
-        p.width,
-        p.height,
-        {
-          primary: '#FFFFFF',
-          secondary: COLORS.NEON.PINK,
-          highlight: COLORS.NEON.CYAN,
-          shadow: 'rgba(8, 3, 16, 0.82)',
-        }
-      );
-      
-      const engineGradient = ctx.createLinearGradient(p.x, p.y + p.height, p.x, p.y + p.height + 15);
-      engineGradient.addColorStop(0, COLORS.NEON.PINK);
-      engineGradient.addColorStop(1, 'transparent');
-      ctx.fillStyle = engineGradient;
-      ctx.globalAlpha = (p.invisibleTimer > 0 ? 0.2 : 0.6) + Math.sin(frameCount.current * 0.3) * 0.2;
-      ctx.fillRect(p.x + p.width / 2 - 4, p.y + p.height - 2, 8, 15);
-      ctx.globalAlpha = 1.0;
       ctx.restore();
     }
 
@@ -2482,6 +2587,8 @@ export default function GameCanvas({
       
       ctx.restore();
     });
+
+    drawPlayer();
 
     // Draw Particles
     particlesRef.current.forEach(particle => {

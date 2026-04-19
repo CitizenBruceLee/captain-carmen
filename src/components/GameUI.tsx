@@ -30,7 +30,7 @@ const STAGE_PRESENTATION = [
 const BOSS_PRESENTATION = [
   {
     kicker: 'Sovereign Signal',
-    title: 'Herald Of Silence',
+    title: 'Boss Alert',
     subtitle: 'A crowned anomaly is descending through the static veil.',
   },
   {

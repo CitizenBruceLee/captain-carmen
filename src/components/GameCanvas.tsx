@@ -275,8 +275,27 @@ export default function GameCanvas({
     if (!audioContextRef.current) {
       const audioContext = new AudioContextCtor();
       const masterGain = audioContext.createGain();
-      masterGain.gain.value = 0.18;
-      masterGain.connect(audioContext.destination);
+      const toneFilter = audioContext.createBiquadFilter();
+      const bodyBoost = audioContext.createBiquadFilter();
+      const compressor = audioContext.createDynamicsCompressor();
+
+      masterGain.gain.value = 0.22;
+      toneFilter.type = 'lowpass';
+      toneFilter.frequency.value = 4200;
+      toneFilter.Q.value = 0.7;
+      bodyBoost.type = 'lowshelf';
+      bodyBoost.frequency.value = 240;
+      bodyBoost.gain.value = 5;
+      compressor.threshold.value = -22;
+      compressor.knee.value = 18;
+      compressor.ratio.value = 3.2;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.14;
+
+      masterGain.connect(bodyBoost);
+      bodyBoost.connect(toneFilter);
+      toneFilter.connect(compressor);
+      compressor.connect(audioContext.destination);
 
       audioContextRef.current = audioContext;
       audioMasterGainRef.current = masterGain;
@@ -315,28 +334,50 @@ export default function GameCanvas({
     } = {}
   ) => {
     const oscillator = audioContext.createOscillator();
+    const bodyOscillator = audioContext.createOscillator();
+    const bodyFilter = audioContext.createBiquadFilter();
     const gain = audioContext.createGain();
+    const bodyGain = audioContext.createGain();
     const startAt = options.when ?? audioContext.currentTime;
+    const mainVolume = options.volume ?? 0.06;
+    const bodyFrequency = Math.max(frequency * 0.5, 28);
+    const bodyType: OscillatorType = options.type === 'triangle' ? 'sine' : 'triangle';
+    const bodyVolume = mainVolume * (options.type === 'triangle' ? 0.24 : 0.38);
 
     oscillator.type = options.type ?? 'triangle';
     oscillator.frequency.setValueAtTime(frequency, startAt);
+    bodyOscillator.type = bodyType;
+    bodyOscillator.frequency.setValueAtTime(bodyFrequency, startAt);
+    bodyFilter.type = 'lowpass';
+    bodyFilter.frequency.setValueAtTime(Math.max(bodyFrequency * 5, 180), startAt);
+    bodyFilter.Q.value = 0.4;
 
     if (options.slideTo !== undefined) {
       oscillator.frequency.exponentialRampToValueAtTime(Math.max(options.slideTo, 1), startAt + duration);
+      bodyOscillator.frequency.exponentialRampToValueAtTime(Math.max(options.slideTo * 0.5, 1), startAt + duration);
     }
 
     if (options.detune !== undefined) {
       oscillator.detune.setValueAtTime(options.detune, startAt);
+      bodyOscillator.detune.setValueAtTime(options.detune * 0.35, startAt);
     }
 
     gain.gain.setValueAtTime(0.0001, startAt);
-    gain.gain.exponentialRampToValueAtTime(options.volume ?? 0.06, startAt + 0.01);
+    gain.gain.exponentialRampToValueAtTime(mainVolume, startAt + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+    bodyGain.gain.setValueAtTime(0.0001, startAt);
+    bodyGain.gain.exponentialRampToValueAtTime(bodyVolume, startAt + 0.014);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
 
     oscillator.connect(gain);
+    bodyOscillator.connect(bodyFilter);
+    bodyFilter.connect(bodyGain);
     gain.connect(masterGain);
+    bodyGain.connect(masterGain);
     oscillator.start(startAt);
+    bodyOscillator.start(startAt);
     oscillator.stop(startAt + duration + 0.03);
+    bodyOscillator.stop(startAt + duration + 0.03);
   }, []);
 
   const playNoiseBurst = useCallback((
@@ -359,9 +400,9 @@ export default function GameCanvas({
     const startAt = options.when ?? audioContext.currentTime;
 
     noiseSource.buffer = noiseBufferRef.current;
-    filter.type = 'bandpass';
+    filter.type = 'lowpass';
     filter.frequency.setValueAtTime(options.filterFrequency ?? 850, startAt);
-    filter.Q.value = 0.7;
+    filter.Q.value = 0.55;
 
     gain.gain.setValueAtTime(0.0001, startAt);
     gain.gain.exponentialRampToValueAtTime(options.volume ?? 0.05, startAt + 0.01);

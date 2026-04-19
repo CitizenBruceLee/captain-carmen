@@ -500,6 +500,7 @@ export default function GameCanvas({
   const touchState = useRef({
     moveTouchId: null as number | null,
     moveLastX: 0,
+    moveTargetX: 0,
     fireActive: false,
     bombPressed: false,
     lastFireTime: 0,
@@ -1224,6 +1225,15 @@ export default function GameCanvas({
     // Update bomb reticle (fixed distance ahead of player)
     p.bombX = p.x + p.width / 2;
     p.bombY = p.y - BOMB_DISTANCE;
+
+    if (touchState.current.moveTouchId !== null) {
+      const deltaToTarget = touchState.current.moveTargetX - p.x;
+      if (Math.abs(deltaToTarget) > 0.5) {
+        p.x += deltaToTarget * 0.35;
+      } else {
+        p.x = touchState.current.moveTargetX;
+      }
+    }
     
     // Clamp player
     p.x = Math.max(0, Math.min(GAME_WIDTH - p.width, p.x));
@@ -1270,13 +1280,8 @@ export default function GameCanvas({
     }
     
     // Touch Fire - bottom-right outer lane fires, inner lane bombs
-    if (touchState.current.fireActive) {
-      if (p.hasAutoFire) {
-        if (time - touchState.current.lastFireTime >= 90) {
-          shootBlaster();
-          touchState.current.lastFireTime = time;
-        }
-      } else if (time - touchState.current.lastFireTime >= 180) {
+    if (touchState.current.fireActive && p.hasAutoFire) {
+      if (time - touchState.current.lastFireTime >= 90) {
         shootBlaster();
         touchState.current.lastFireTime = time;
       }
@@ -2175,11 +2180,12 @@ export default function GameCanvas({
       const zoneTop = GAME_HEIGHT * 0.6;
       const moveZoneEnd = GAME_WIDTH * 0.5;
       const bombSplit = GAME_WIDTH * 0.75;
-      const moveThreshold = 3;
-      const dragScale = 1.35;
+      const moveThreshold = 2;
+      const dragScale = 1.1;
 
       let nextMoveTouchId: number | null = null;
       let nextMoveX = touchState.current.moveLastX;
+      let nextMoveTargetX = touchState.current.moveTargetX;
       let fireActive = false;
       let bombPressed = false;
 
@@ -2200,8 +2206,13 @@ export default function GameCanvas({
               const deltaX = x - touchState.current.moveLastX;
               if (Math.abs(deltaX) >= moveThreshold) {
                 const player = playerRef.current;
-                player.x = Math.max(0, Math.min(GAME_WIDTH - player.width, player.x + deltaX * dragScale));
+                nextMoveTargetX = Math.max(
+                  0,
+                  Math.min(GAME_WIDTH - player.width, touchState.current.moveTargetX + deltaX * dragScale)
+                );
               }
+            } else {
+              nextMoveTargetX = playerRef.current.x;
             }
 
             nextMoveX = x;
@@ -2224,11 +2235,13 @@ export default function GameCanvas({
 
       touchState.current.moveTouchId = nextMoveTouchId;
       touchState.current.moveLastX = nextMoveX;
+      touchState.current.moveTargetX = nextMoveTargetX;
       touchState.current.fireActive = fireActive;
       touchState.current.bombPressed = bombPressed;
 
       if (nextMoveTouchId === null) {
         touchState.current.moveLastX = 0;
+        touchState.current.moveTargetX = playerRef.current.x;
       }
 
       if (!fireActive) {

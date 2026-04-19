@@ -183,8 +183,12 @@ export default function GameCanvas({
   const COMBO_TIMEOUT_MS = 2200;
   const WAVE_ENTRY_SHIELD_MS = 5000;
   const BOSS_MISSILE_GRACE_MS = 5000;
+  const ENEMY_BULLET_LIFETIME_MS = 4200;
+  const ENEMY_MISSILE_LIFETIME_MS = 3200;
   const MAX_PARTICLES = 220;
   const MAX_ENEMY_PROJECTILES = 42;
+  const HIGH_ENEMY_LOAD = 9;
+  const EXTREME_ENEMY_LOAD = 12;
   const SOFT_EFFECT_LOAD = 55;
   const HEAVY_EFFECT_LOAD = 95;
 
@@ -955,6 +959,7 @@ export default function GameCanvas({
     };
     
     enemiesRef.current.push(newEnemy);
+    return newEnemy;
   }, []);
 
   const startFormation = useCallback((time: number) => {
@@ -1075,6 +1080,9 @@ export default function GameCanvas({
       damage: 1,
       penetration: 0,
       sourceType: enemy.type,
+      expiresAt: type === 'MISSILE'
+        ? currentFrameTimeRef.current + ENEMY_MISSILE_LIFETIME_MS
+        : (type === 'BULLET' ? currentFrameTimeRef.current + ENEMY_BULLET_LIFETIME_MS : undefined),
     };
     projectilesRef.current.push(newProjectile);
     if (enemy.class === 'GROUND' && type === 'BULLET') {
@@ -1403,7 +1411,12 @@ export default function GameCanvas({
     const formationTriggerInterval = Math.max(3, 6 - Math.min(level, 3));
     const fallbackSpawnDelay = Math.max(900, stageProfile.spawnRate - 150);
     const maxGroundEnemies = level === 1 ? 3 : level === 2 ? 2 : 3;
+    const maxAirEnemies = level === 1 ? 6 : level === 2 ? 7 : 8;
+    const maxTotalEnemies = maxAirEnemies + maxGroundEnemies + 1;
     let activeGroundEnemies = enemiesRef.current.reduce((count, enemy) => count + (enemy.class === 'GROUND' ? 1 : 0), 0);
+    let activeAirEnemies = enemiesRef.current.length - activeGroundEnemies;
+    let activeTotalEnemies = enemiesRef.current.length;
+    const formationSpawnBudget = activeTotalEnemies >= maxTotalEnemies - 2 ? 1 : 2;
 
     // Spawn enemies
     const hasBoss = enemiesRef.current.some(e => e.type === 'BOSS');
@@ -1418,7 +1431,8 @@ export default function GameCanvas({
           enemiesDefeatedInLevel.current > 0 &&
           enemiesDefeatedInLevel.current % formationTriggerInterval === 0 &&
           lastFormationTriggerRef.current !== enemiesDefeatedInLevel.current &&
-          !activeFormationRef.current;
+          !activeFormationRef.current &&
+          activeTotalEnemies <= maxTotalEnemies - 2;
 
         if (shouldTriggerFormation) {
           lastFormationTriggerRef.current = enemiesDefeatedInLevel.current;
@@ -1426,17 +1440,28 @@ export default function GameCanvas({
         }
 
         if (activeFormationRef.current) {
+          let spawnedThisFrame = 0;
           while (
             formationStepIndexRef.current < activeFormationRef.current.length &&
-            time - formationStartedAtRef.current >= activeFormationRef.current[formationStepIndexRef.current].delay
+            time - formationStartedAtRef.current >= activeFormationRef.current[formationStepIndexRef.current].delay &&
+            spawnedThisFrame < formationSpawnBudget
           ) {
             const formationEnemy = activeFormationRef.current[formationStepIndexRef.current];
-            if (formationEnemy.class === 'GROUND' && activeGroundEnemies >= maxGroundEnemies) {
-              formationStepIndexRef.current += 1;
-              continue;
+            const isGroundFormation = formationEnemy.class === 'GROUND';
+
+            if (activeTotalEnemies >= maxTotalEnemies) {
+              break;
             }
 
-            spawnEnemy({
+            if (isGroundFormation) {
+              if (activeGroundEnemies >= maxGroundEnemies) {
+                break;
+              }
+            } else if (activeAirEnemies >= maxAirEnemies) {
+              break;
+            }
+
+            const spawnedEnemy = spawnEnemy({
               x: formationEnemy.x,
               type: formationEnemy.type,
               class: formationEnemy.class,
@@ -1445,10 +1470,14 @@ export default function GameCanvas({
               phase: formationEnemy.phase,
             });
 
-            if (formationEnemy.class === 'GROUND') {
+            if (spawnedEnemy.class === 'GROUND') {
               activeGroundEnemies += 1;
+            } else {
+              activeAirEnemies += 1;
             }
 
+            activeTotalEnemies += 1;
+            spawnedThisFrame += 1;
             formationStepIndexRef.current += 1;
             lastSpawnTime.current = time;
           }
@@ -1457,8 +1486,18 @@ export default function GameCanvas({
             activeFormationRef.current = null;
             formationStepIndexRef.current = 0;
           }
-        } else if (time - lastSpawnTime.current > fallbackSpawnDelay) {
-          spawnEnemy(activeGroundEnemies >= maxGroundEnemies ? { class: 'AIR' } : undefined);
+        } else if (
+          time - lastSpawnTime.current > fallbackSpawnDelay &&
+          activeTotalEnemies < maxTotalEnemies &&
+          activeAirEnemies < maxAirEnemies
+        ) {
+          const spawnedEnemy = spawnEnemy(activeGroundEnemies >= maxGroundEnemies ? { class: 'AIR' } : undefined);
+          if (spawnedEnemy.class === 'GROUND') {
+            activeGroundEnemies += 1;
+          } else {
+            activeAirEnemies += 1;
+          }
+          activeTotalEnemies += 1;
           lastSpawnTime.current = time;
         }
       }
@@ -1487,6 +1526,11 @@ export default function GameCanvas({
     // Update Projectiles
     for (let idx = projectilesRef.current.length - 1; idx >= 0; idx -= 1) {
       const proj = projectilesRef.current[idx];
+      if (proj.expiresAt !== undefined && time >= proj.expiresAt) {
+        projectilesRef.current.splice(idx, 1);
+        continue;
+      }
+
       // ... missile tracking ...
       // Missile tracking
       if (proj.class === 'MISSILE' && proj.owner === 'enemy') {
@@ -1500,11 +1544,6 @@ export default function GameCanvas({
         if (speed > 6) {
           proj.vx = (proj.vx / speed) * 6;
           proj.vy = (proj.vy / speed) * 6;
-        }
-
-        if (proj.expiresAt !== undefined && time >= proj.expiresAt) {
-          projectilesRef.current.splice(idx, 1);
-          return;
         }
       }
 
@@ -1530,7 +1569,13 @@ export default function GameCanvas({
       }
 
       // Bounds check
-      if (proj.y < -100 || proj.y > GAME_HEIGHT + 100 || (proj.class === 'BOMB' && proj.width < 1)) {
+      if (
+        proj.x < -100 ||
+        proj.x > GAME_WIDTH + 100 ||
+        proj.y < -100 ||
+        proj.y > GAME_HEIGHT + 100 ||
+        (proj.class === 'BOMB' && proj.width < 1)
+      ) {
         projectilesRef.current.splice(idx, 1);
         continue;
       }
@@ -1791,8 +1836,11 @@ export default function GameCanvas({
       + projectilesRef.current.length
       + powerUpsRef.current.length
       + Math.floor(particlesRef.current.length * 0.35);
+    const enemyCount = enemiesRef.current.length;
     const lowEffects = sceneLoad > SOFT_EFFECT_LOAD;
     const minimalEffects = sceneLoad > HEAVY_EFFECT_LOAD;
+    const enemyHeavyLoad = enemyCount >= HIGH_ENEMY_LOAD;
+    const enemyExtremeLoad = enemyCount >= EXTREME_ENEMY_LOAD;
 
     ctx.fillStyle = COLORS.SPACE_BLACK;
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -2023,18 +2071,18 @@ export default function GameCanvas({
           ? (hpRatio > 0.6 ? stageTheme.bossBar : (hpRatio > 0.3 ? stageTheme.reticle : stageTheme.airPalette[0]))
           : baseColor;
 
-        ctx.shadowBlur = lowEffects ? 6 : 15;
+          ctx.shadowBlur = enemyHeavyLoad ? 0 : (lowEffects ? 6 : 15);
         ctx.shadowColor = color;
         
         // Fine Diva Details: Sparkle/Halo
-        if (!lowEffects && frameCount.current % 30 < 5) {
+          if (!enemyHeavyLoad && !lowEffects && frameCount.current % 30 < 5) {
            ctx.fillStyle = '#FFFFFF';
            ctx.fillRect(enemy.x + Math.random() * enemy.width, enemy.y + Math.random() * enemy.height, 2, 2);
         }
 
         if (enemy.type === 'BOSS') {
            // Modern Boss Halo
-           if (!lowEffects) {
+            if (!enemyHeavyLoad && !lowEffects) {
              ctx.strokeStyle = color;
              ctx.setLineDash([10, 5]);
              ctx.lineWidth = 1;
@@ -2051,7 +2099,7 @@ export default function GameCanvas({
              shadow: 'rgba(4, 2, 8, 0.84)',
            });
            // Pulsing core - DIVA GEM
-           if (!minimalEffects) {
+           if (!enemyExtremeLoad && !minimalEffects) {
              ctx.beginPath();
              ctx.arc(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, 12 * (1 + Math.sin(frameCount.current * 0.1)), 0, Math.PI * 2);
              ctx.fillStyle = stageTheme.bossCore;
@@ -2084,9 +2132,50 @@ export default function GameCanvas({
         const visualX = enemy.x - (visualWidth - enemy.width) / 2;
         const visualY = enemy.y - enemy.height * 0.01 + recoilProgress * 2 + rumbleOffset;
         const groundLineY = visualY + visualHeight * 0.9;
+        const simplifyGroundRender = enemyHeavyLoad;
 
-        ctx.shadowBlur = lowEffects ? 6 : 14;
+        ctx.shadowBlur = simplifyGroundRender ? 0 : (lowEffects ? 6 : 14);
         ctx.shadowColor = groundPrimary;
+
+        if (simplifyGroundRender) {
+          ctx.fillStyle = 'rgba(8, 3, 16, 0.78)';
+          ctx.fillRect(visualX + visualWidth * 0.08, groundLineY, visualWidth * 0.84, visualHeight * 0.12);
+
+          drawArcadeSprite(ctx, sprite, visualX, visualY, visualWidth, visualHeight * 0.92, {
+            primary: groundPrimary,
+            secondary: groundSecondary,
+            highlight: '#FFFFFF',
+            shadow: 'rgba(8, 3, 16, 0.72)',
+          });
+
+          if (isTurret || isCore) {
+            const turretBaseX = visualX + visualWidth * 0.5;
+            const turretBaseY = visualY + visualHeight * 0.34 + recoilProgress * 2;
+            const barrelLength = visualHeight * (isTurret ? 0.42 : 0.28);
+            const playerCenterX = p.x + p.width / 2;
+            const horizontalBias = Math.max(-1, Math.min(1, (playerCenterX - turretBaseX) / (GAME_WIDTH * 0.24)));
+            const barrelTraverse = horizontalBias * visualWidth * (isTurret ? 0.2 : 0.13);
+            const muzzleX = turretBaseX + barrelTraverse;
+            const muzzleY = turretBaseY - barrelLength + Math.abs(horizontalBias) * visualHeight * 0.05;
+
+            ctx.strokeStyle = groundPrimary;
+            ctx.lineWidth = isTurret ? 4 : 3;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(turretBaseX, turretBaseY);
+            ctx.lineTo(muzzleX, muzzleY);
+            ctx.stroke();
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(muzzleX, muzzleY, isTurret ? 2.4 : 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineCap = 'butt';
+          }
+
+          ctx.restore();
+          return;
+        }
 
         const groundShadow = ctx.createRadialGradient(
           visualX + visualWidth * 0.5,

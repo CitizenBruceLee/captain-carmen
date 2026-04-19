@@ -498,9 +498,9 @@ export default function GameCanvas({
 
   // Touch Handling State
   const touchState = useRef({
-    moveActive: false,
-    moveX: 0,
+    moveDirection: 0,
     fireActive: false,
+    bombPressed: false,
     lastFireTime: 0,
   });
 
@@ -1224,11 +1224,9 @@ export default function GameCanvas({
     p.bombX = p.x + p.width / 2;
     p.bombY = p.y - BOMB_DISTANCE;
     
-    // Touch Movement (Swipe in bottom left)
-    if (touchState.current.moveActive) {
-      const targetX = touchState.current.moveX;
-      p.x += (targetX - (p.x + p.width / 2)) * 0.15;
-    }
+    // Touch Movement (bottom-left zone split into left/right)
+    if (touchState.current.moveDirection < 0) p.x -= PLAYER_SPEED;
+    if (touchState.current.moveDirection > 0) p.x += PLAYER_SPEED;
     
     // Clamp player
     p.x = Math.max(0, Math.min(GAME_WIDTH - p.width, p.x));
@@ -1274,12 +1272,16 @@ export default function GameCanvas({
       dropBomb();
     }
     
-    // Touch Fire - Only auto-fire if powered up, otherwise tap
+    // Touch Fire - bottom-right outer lane fires, inner lane bombs
     if (touchState.current.fireActive) {
       if (p.hasAutoFire) {
-        if (frameCount.current % 10 === 0) shootBlaster();
-      } else if (frameCount.current % 60 === 0) { // Very slow accidental auto if held, mostly relies on taps
-         // shootBlaster(); 
+        if (time - touchState.current.lastFireTime >= 90) {
+          shootBlaster();
+          touchState.current.lastFireTime = time;
+        }
+      } else if (time - touchState.current.lastFireTime >= 180) {
+        shootBlaster();
+        touchState.current.lastFireTime = time;
       }
     }
 
@@ -2164,6 +2166,60 @@ export default function GameCanvas({
   }, [closeAudio]);
 
   useEffect(() => {
+    const syncTouchZones = (touches: TouchList) => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const zoneTop = GAME_HEIGHT * 0.6;
+      const moveZoneEnd = GAME_WIDTH * 0.5;
+      const moveSplit = GAME_WIDTH * 0.25;
+      const bombSplit = GAME_WIDTH * 0.75;
+
+      let moveDirection = 0;
+      let fireActive = false;
+      let bombPressed = false;
+
+      for (let index = 0; index < touches.length; index += 1) {
+        const touch = touches[index];
+        const x = (touch.clientX - rect.left) * scaleX;
+        const y = (touch.clientY - rect.top) * scaleY;
+
+        if (y < zoneTop) {
+          continue;
+        }
+
+        if (x < moveZoneEnd) {
+          moveDirection = x < moveSplit ? -1 : 1;
+        } else if (x < bombSplit) {
+          bombPressed = true;
+        } else {
+          fireActive = true;
+        }
+      }
+
+      if (bombPressed && !touchState.current.bombPressed) {
+        dropBomb();
+      }
+
+      if (fireActive && !touchState.current.fireActive) {
+        shootBlaster();
+        touchState.current.lastFireTime = performance.now();
+      }
+
+      touchState.current.moveDirection = moveDirection;
+      touchState.current.fireActive = fireActive;
+      touchState.current.bombPressed = bombPressed;
+
+      if (!fireActive) {
+        touchState.current.lastFireTime = 0;
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'MetaLeft' || e.code === 'MetaRight') {
         e.preventDefault();
@@ -2191,48 +2247,25 @@ export default function GameCanvas({
 
       const canvas = canvasRef.current;
       if (!canvas) return;
-      
-      const { x, y } = getCanvasPoint(e);
-      
-      // Check zones (Bottom 30%)
-      if (y > GAME_HEIGHT * 0.6) {
-        if (x < GAME_WIDTH / 2) {
-          touchState.current.moveActive = true;
-          touchState.current.moveX = x;
-        } else {
-          touchState.current.fireActive = true;
-          if (e.touches.length > 1) {
-            dropBomb();
-          } else if (!playerRef.current.hasAutoFire) {
-            shootBlaster();
-          }
-        }
-      }
+
+      syncTouchZones(e.touches);
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault(); // Prevent scrolling AND selection
       if (gameState !== 'PLAYING' && gameState !== 'LEVEL_UP') return;
-      
-      const { x, y } = getCanvasPoint(e);
-      
-      // Update movement if finger is in the left zone
-      if (x < GAME_WIDTH / 2 && y > GAME_HEIGHT * 0.4) {
-        touchState.current.moveActive = true;
-        touchState.current.moveX = x;
-      }
+
+      syncTouchZones(e.touches);
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
       e.preventDefault();
-      // If no touches remain, clear all
-      if (e.touches.length === 0) {
-        touchState.current.moveActive = false;
-        touchState.current.fireActive = false;
-      } else {
-        touchState.current.moveActive = false;
-        touchState.current.fireActive = false;
-      }
+      syncTouchZones(e.touches);
+    };
+
+    const handleTouchCancel = (e: TouchEvent) => {
+      e.preventDefault();
+      syncTouchZones(e.touches);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -2244,6 +2277,7 @@ export default function GameCanvas({
       canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
       canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
       canvas.addEventListener('touchend', handleTouchEnd);
+      canvas.addEventListener('touchcancel', handleTouchCancel);
     }
     
     requestRef.current = requestAnimationFrame(update);
@@ -2255,6 +2289,7 @@ export default function GameCanvas({
         canvas.removeEventListener('touchstart', handleTouchStart);
         canvas.removeEventListener('touchmove', handleTouchMove);
         canvas.removeEventListener('touchend', handleTouchEnd);
+        canvas.removeEventListener('touchcancel', handleTouchCancel);
       }
       cancelAnimationFrame(requestRef.current);
     };
@@ -2272,11 +2307,25 @@ export default function GameCanvas({
       {/* Visual Touch Indicators (Optional, but helps user know where they can press) */}
       {(gameState === 'PLAYING' || gameState === 'LEVEL_UP') && (
         <>
-          <div className="absolute bottom-4 left-4 w-1/2 h-40 border-2 border-white/5 bg-white/5 rounded-2xl flex items-center justify-center opacity-30">
-            <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Move Zone</span>
+          <div className="absolute bottom-4 left-4 w-[calc(50%-1.5rem)] h-40 border-2 border-white/5 bg-white/5 rounded-2xl opacity-30 overflow-hidden">
+            <div className="grid h-full grid-cols-2">
+              <div className="flex items-center justify-center border-r border-white/10">
+                <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Left</span>
+              </div>
+              <div className="flex items-center justify-center">
+                <span className="text-[10px] uppercase tracking-widest text-white/40 drop-shadow-md">Right</span>
+              </div>
+            </div>
           </div>
-          <div className="absolute bottom-4 right-4 w-[40%] h-40 border-2 border-[#FF10F0]/10 bg-[#FF10F0]/5 rounded-2xl flex items-center justify-center opacity-30">
-            <span className="text-[10px] uppercase tracking-widest text-[#FF10F0]/40 drop-shadow-md">Fire Zone</span>
+          <div className="absolute bottom-4 right-4 w-[calc(50%-1.5rem)] h-40 border-2 border-[#FF10F0]/10 bg-[#FF10F0]/5 rounded-2xl opacity-30 overflow-hidden">
+            <div className="grid h-full grid-cols-2">
+              <div className="flex items-center justify-center border-r border-[#FF10F0]/10">
+                <span className="text-[10px] uppercase tracking-widest text-[#FF10F0]/40 drop-shadow-md">Bomb</span>
+              </div>
+              <div className="flex items-center justify-center">
+                <span className="text-[10px] uppercase tracking-widest text-[#FF10F0]/40 drop-shadow-md">Fire</span>
+              </div>
+            </div>
           </div>
         </>
       )}
